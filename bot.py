@@ -7,44 +7,42 @@ from flask import Flask
 import telebot
 import yt_dlp
 
-# ১. Render Web Service যাতে পোর্ট ফেইল না করে
+# ১. Render পোর্ট ফেইল ঠেকানোর ডামি ওয়েব সার্ভার
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is alive and running!"
+    return "Bot is healthy and live!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# ২. টেলিগ্রাম বট সেটআপ
+# ২. টেলিগ্রাম বট কনফিগারেশন
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN environment variable is missing!")
+    raise ValueError("BOT_TOKEN env variable not set!")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 FFMPEG_DIR = os.path.abspath("ffmpeg_bin") if os.path.exists("ffmpeg_bin") else None
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    welcome_text = (
-        f"👋 হ্যালো, {message.from_user.first_name}!\n\n"
-        "ভিডিও ডাউনলোডার বট চালু আছে। যেকোনো YouTube বা Facebook ভিডিওর লিঙ্ক পাঠান, "
-        "আমি ডাউনলোড করে পাঠিয়ে দেব।"
+    bot.reply_to(
+        message, 
+        f"👋 হ্যালো {message.from_user.first_name}! যেকোনো YouTube বা Facebook ভিডিওর লিঙ্ক পাঠান, ডাউনলোড করে দেব।"
     )
-    bot.reply_to(message, welcome_text)
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
-    bot.reply_to(message, "সরাসরি যেকোনো ভিডিওর লিঙ্ক পাঠান। টেলিগ্রামের সর্বোচ্চ ফাইল সাইজ ৫০MB।")
+    bot.reply_to(message, "সরাসরি লিঙ্ক পেস্ট করুন। টেলিগ্রাম লিমিট সর্বোচ্চ ৫০MB।")
 
 @bot.message_handler(func=lambda message: True)
 def process_video_link(message):
     url = message.text.strip()
 
     if not (url.startswith("http://") or url.startswith("https://")):
-        bot.reply_to(message, "⚠️ দয়া করে একটি সঠিক URL দিন।")
+        bot.reply_to(message, "⚠️ একটি সঠিক ভিডিও URL দিন।")
         return
 
     status_msg = bot.reply_to(message, "⏳ ভিডিও যাচাই ও ডাউনলোড হচ্ছে...")
@@ -52,24 +50,32 @@ def process_video_link(message):
     output_dir = f"downloads/{user_id}"
     os.makedirs(output_dir, exist_ok=True)
 
-    # yt-dlp সেটিংস ('The page needs to be reloaded' বাইপাস করতে অ্যান্ড্রয়েড ক্লায়েন্ট ব্যবহার)
+    # yt-dlp পারফেক্ট অ্যান্টি-বট কনফিগারেশন
     ydl_opts = {
         'format': 'bestvideo[filesize<35M]+bestaudio[filesize<10M]/best[filesize<48M]/best',
         'merge_output_format': 'mp4',
         'outtmpl': f'{output_dir}/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
+        # একাধিক ক্লায়েন্ট ফলব্যাক (iOS, Android, TV) যাতে ডেটাসেন্টার আইপি ব্লক এড়িয়ে যায়
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios'],
-                'player_skip': ['webpage', 'configs']
+                'player_client': ['ios', 'android', 'tv_embedded'],
+                'player_skip': ['webpage']
             }
+        },
+        'http_headers': {
+            'User-Agent': 'com.google.ios.youtube/19.29.1 (iPhone14,3; U; CPU iOS 17_5_1 like Mac OS X; en_US)',
+            'Accept-Language': 'en-US,en;q=0.9',
         }
     }
 
-    # FFmpeg পাওয়া গেলে যুক্ত করা
     if FFMPEG_DIR:
         ydl_opts['ffmpeg_location'] = FFMPEG_DIR
+
+    # cookies.txt ফাইল থাকলে লোড করা
+    if os.path.exists("cookies.txt"):
+        ydl_opts['cookiefile'] = 'cookies.txt'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -78,14 +84,14 @@ def process_video_link(message):
         downloaded_files = glob.glob(f"{output_dir}/*")
         if not downloaded_files:
             bot.edit_message_text(
-                "❌ ফাইল পাওয়া যায়নি বা সাইজ ৫০MB-এর বেশি।", 
+                "❌ ফাইল পাওয়া যায়নি বা ফাইলের সাইজ ৫০MB-এর বেশি।", 
                 user_id, 
                 status_msg.message_id
             )
             return
 
         file_path = downloaded_files[0]
-        bot.edit_message_text("📤 ভিডিও টেলিগ্রামে আপলোড হচ্ছে...", user_id, status_msg.message_id)
+        bot.edit_message_text("📤 ভিডিও টেলিগ্রামে পাঠানো হচ্ছে...", user_id, status_msg.message_id)
 
         with open(file_path, 'rb') as video_file:
             bot.send_video(user_id, video_file, supports_streaming=True)
@@ -96,15 +102,12 @@ def process_video_link(message):
         bot.edit_message_text(f"⚠️ এরর: {str(e)[:120]}", user_id, status_msg.message_id)
 
     finally:
-        # কাজ শেষে ডাউনলোড ফাইল ও ফোল্ডার ডিলিট করা
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir, ignore_errors=True)
 
 if __name__ == "__main__":
-    # Flask ওয়েব সার্ভার আলাদা থ্রেডে চালু করা
     threading.Thread(target=run_web_server, daemon=True).start()
 
-    # পুরনো সেশনের কনফ্লিক্ট সরানো
     try:
         bot.remove_webhook()
         time.sleep(1)
@@ -113,17 +116,14 @@ if __name__ == "__main__":
 
     print("Bot is successfully listening...")
 
-    # সেশন কনফ্লিক্ট (409) ও রিলোড হ্যান্ডলার
+    # কনফ্লিক্ট (409) রিকভারি লুপ
     while True:
         try:
             bot.polling(none_stop=True, interval=1, timeout=20)
         except telebot.apihelper.ApiTelegramException as e:
             if e.error_code == 409:
-                print("সেশন কনফ্লিক্ট হয়েছে। পুরনো সেশন বন্ধ হতে ৫ সেকেন্ড অপেক্ষা করা হচ্ছে...")
                 time.sleep(5)
             else:
-                print(f"টেলিগ্রাম এরর: {e}")
                 time.sleep(3)
-        except Exception as e:
-            print(f"অপ্রত্যাশিত ত্রুটি: {e}")
+        except Exception:
             time.sleep(3)
