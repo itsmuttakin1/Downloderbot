@@ -7,7 +7,7 @@ from flask import Flask
 import telebot
 import yt_dlp
 
-# ১. Render Web Service যাতে 'No open ports' এরর না দেয় সেজন্য ডামি Flask সার্ভার
+# ১. Render Web Service যাতে পোর্ট ফেইল না করে
 app = Flask(__name__)
 
 @app.route('/')
@@ -18,7 +18,7 @@ def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# ২. টেলিগ্রাম বট কনফিগারেশন
+# ২. টেলিগ্রাম বট সেটআপ
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is missing!")
@@ -31,13 +31,13 @@ def start_command(message):
     welcome_text = (
         f"👋 হ্যালো, {message.from_user.first_name}!\n\n"
         "ভিডিও ডাউনলোডার বট চালু আছে। যেকোনো YouTube বা Facebook ভিডিওর লিঙ্ক পাঠান, "
-        "আমি ভিডিও ডাউনলোড করে দেব।"
+        "আমি ডাউনলোড করে পাঠিয়ে দেব।"
     )
     bot.reply_to(message, welcome_text)
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
-    bot.reply_to(message, "সরাসরি যেকোনো ভিডিওর লিঙ্ক পাঠান। টেলিগ্রামের সর্বোচ্চ ফাইল সাইজ লিমিট ৫০MB।")
+    bot.reply_to(message, "সরাসরি যেকোনো ভিডিওর লিঙ্ক পাঠান। টেলিগ্রামের সর্বোচ্চ ফাইল সাইজ ৫০MB।")
 
 @bot.message_handler(func=lambda message: True)
 def process_video_link(message):
@@ -52,22 +52,24 @@ def process_video_link(message):
     output_dir = f"downloads/{user_id}"
     os.makedirs(output_dir, exist_ok=True)
 
-    # yt-dlp সেটিংস
+    # yt-dlp সেটিংস ('The page needs to be reloaded' বাইপাস করতে অ্যান্ড্রয়েড ক্লায়েন্ট ব্যবহার)
     ydl_opts = {
         'format': 'bestvideo[filesize<35M]+bestaudio[filesize<10M]/best[filesize<48M]/best',
         'merge_output_format': 'mp4',
         'outtmpl': f'{output_dir}/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios'],
+                'player_skip': ['webpage', 'configs']
+            }
+        }
     }
 
-    # FFmpeg লোকেশন যুক্ত করা
+    # FFmpeg পাওয়া গেলে যুক্ত করা
     if FFMPEG_DIR:
         ydl_opts['ffmpeg_location'] = FFMPEG_DIR
-
-    # কুকিজ ফাইল ব্যবহার করে সাইন-ইন বাইপাস
-    if os.path.exists("cookies.txt"):
-        ydl_opts['cookiefile'] = 'cookies.txt'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -94,7 +96,7 @@ def process_video_link(message):
         bot.edit_message_text(f"⚠️ এরর: {str(e)[:120]}", user_id, status_msg.message_id)
 
     finally:
-        # কাজ শেষে স্টোরেজ খালি করা
+        # কাজ শেষে ডাউনলোড ফাইল ও ফোল্ডার ডিলিট করা
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir, ignore_errors=True)
 
@@ -102,7 +104,7 @@ if __name__ == "__main__":
     # Flask ওয়েব সার্ভার আলাদা থ্রেডে চালু করা
     threading.Thread(target=run_web_server, daemon=True).start()
 
-    # পুরনো পেন্ডিং আপডেট রিমুভ করা
+    # পুরনো সেশনের কনফ্লিক্ট সরানো
     try:
         bot.remove_webhook()
         time.sleep(1)
@@ -111,7 +113,7 @@ if __name__ == "__main__":
 
     print("Bot is successfully listening...")
 
-    # Render Deploy-এর সময় সেশন কনফ্লিক্ট (409) হ্যান্ডল করার লুপ
+    # সেশন কনফ্লিক্ট (409) ও রিলোড হ্যান্ডলার
     while True:
         try:
             bot.polling(none_stop=True, interval=1, timeout=20)
