@@ -100,6 +100,23 @@ def resolve_url(url):
     except Exception:
         return url
 
+# পেজ/প্রোফাইল ইউআরএল ঠিক করা (profile.php বা ইউজারনেম থাকলে /videos পাথ নিশ্চিত করা)
+def format_fb_video_url(url):
+    url = url.strip()
+    if "profile.php" in url:
+        if "sk=videos" not in url:
+            sep = "&" if "?" in url else "?"
+            return f"{url}{sep}sk=videos"
+        return url
+    else:
+        clean_url = url.split("?")[0].rstrip("/")
+        if not clean_url.endswith("/videos"):
+            return f"{clean_url}/videos"
+        return clean_url
+
+# কনফার্মেশনের জন্য টেম্পোরারি ডাটা রাখার ডিকশনারি
+PENDING_TASKS = {}
+
 # ৪. /start কমান্ড
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
@@ -113,7 +130,8 @@ def start_cmd(message):
         f"স্বাগতম **{message.from_user.first_name}**! 🚀\n\n"
         "এটি একটি উচ্চগতির সোশ্যাল মিডিয়া ভিডিও ডাউনলোডার বট।\n\n"
         "✨ **সাপোর্টেড ফিচারসমূহ:**\n"
-        "🔹 **Facebook Single & All Videos**\n"
+        "🔹 **Facebook All Videos** (Page/Profile)\n"
+        "🔹 **Facebook Single Videos & Reels**\n"
         "🔹 **Instagram Reels & Posts**\n"
         "🔹 **TikTok No-Watermark Videos**\n\n"
         "📊 **আপনার অ্যাকাউন্ট তথ্য:**\n"
@@ -122,7 +140,7 @@ def start_cmd(message):
         "💡 **কয়েন নিয়মাবলী:**\n"
         "• প্রতি ভিডিও ডাউনলোড: ২ কয়েন\n"
         "• দৈনিক ফ্রি বোনাস: ৬ কয়েন\n\n"
-        "যেকোনো ভিডিওর লিংক সরাসরি মেসেজে পাঠান অথবা নিচের বাটন ব্যবহার করুন:"
+        "যেকোনো একটি ভিডিওর লিংক সরাসরি মেসেজে দিন অথবা ফেসবুকের সব ভিডিও ডাউনলোড করতে নিচের বাটনটি চাপুন:"
     )
 
     markup = types.InlineKeyboardMarkup(row_width=2)
@@ -240,34 +258,30 @@ def step_toggle_vip(message):
     except Exception:
         bot.reply_to(message, "❌ ভুল ফরম্যাট! দিন: `USER_ID STATUS` (১ বা ০)", parse_mode="Markdown")
 
-# ৬. Facebook All Videos Flow
+# ৬. Facebook All Videos: লিঙ্ক গ্রহণ এবং নিশ্চিতকরণ
 @bot.callback_query_handler(func=lambda call: call.data == "fb_all_start")
 def ask_fb_page_link(call):
     msg = bot.send_message(
         call.message.chat.id,
-        "🔗 **Facebook Page বা Profile-এর ভিডিও লিংক পাঠান:**\n\n"
-        "(উদাহরণ: `https://www.facebook.com/PageName/videos` অথবা সাধারণ পেজের লিংক)",
+        "🔗 **Facebook Page বা Profile-এর লিংকটি পাঠান:**\n\n"
+        "(যেমন: `https://www.facebook.com/profile.php?id=...` অথবা পেজের লিংক)",
         parse_mode="Markdown"
     )
-    bot.register_next_step_handler(msg, handle_fb_all_videos)
+    bot.register_next_step_handler(msg, scan_fb_page_videos)
 
-def handle_fb_all_videos(message):
+def scan_fb_page_videos(message):
     url = message.text.strip()
     if not ("facebook.com" in url or "fb.watch" in url):
         bot.reply_to(message, "⚠️ এটি সঠিক ফেসবুক লিংক নয়। আবার চেষ্টা করুন।")
         return
 
     user_id = message.chat.id
-    user = get_user(user_id)
-    is_vip = user[2] == 1
+    status_msg = bot.reply_to(message, "🔍 পেজের ভিডিওগুলো অনুসন্ধান করা হচ্ছে, দয়া করে অপেক্ষা করুন...")
 
-    if not is_vip and user[1] < 2:
-        bot.reply_to(message, "❌ আপনার অ্যাকাউন্টে পর্যাপ্ত কয়েন নেই! প্রতি ভিডিওর জন্য ২ কয়েন প্রয়োজন।")
-        return
+    # প্রোফাইল ও পেজের জন্য সঠিক ভিডিও সেকশন নির্ধারণ
+    target_url = format_fb_video_url(url)
 
-    status_msg = bot.reply_to(message, "🔍 পেজের ভিডিওগুলো অনুসন্ধান করা হচ্ছে, অপেক্ষা করুন...")
-
-    ydl_opts_info = {
+    ydl_opts_scan = {
         'extract_flat': 'in_playlist',
         'quiet': True,
         'no_warnings': True,
@@ -277,27 +291,87 @@ def handle_fb_all_videos(message):
     }
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            res = ydl.extract_info(url, download=False)
+        with yt_dlp.YoutubeDL(ydl_opts_scan) as ydl:
+            res = ydl.extract_info(target_url, download=False)
             
         entries = []
-        if 'entries' in res and res['entries']:
-            entries = list(res['entries'])
-        else:
+        if res and 'entries' in res and res['entries']:
+            entries = [e for e in res['entries'] if e]
+        elif res:
             entries = [res]
 
-        total_found = len(entries)
-        if total_found == 0:
-            bot.edit_message_text("❌ পেজে কোনো ডাউনলোডযোগ্য ভিডিও পাওয়া যায়নি।", user_id, status_msg.message_id)
+        total_videos = len(entries)
+        if total_videos == 0:
+            bot.edit_message_text("❌ এই প্রোফাইল বা পেজে কোনো পাবলিক ভিডিও পাওয়া যায়নি।", user_id, status_msg.message_id)
             return
 
-        bot.edit_message_text(f"🎬 মোট {total_found}টি ভিডিও পাওয়া গেছে। এক এক করে ডাউনলোড ও পাঠানো হচ্ছে...", user_id, status_msg.message_id)
+        user = get_user(user_id)
+        is_vip = user[2] == 1
+        total_cost = 0 if is_vip else total_videos * 2
 
-        # এক এক করে ভিডিও প্রসেস ও সেন্ড করা
+        # টেম্পোরারি ডাটাতে এন্ট্রি রাখা
+        PENDING_TASKS[user_id] = {
+            'entries': entries,
+            'total_videos': total_videos,
+            'total_cost': total_cost,
+            'is_vip': is_vip
+        }
+
+        cost_text = "০ (💎 আপনি প্রিমিয়াম মেম্বার)" if is_vip else f"{total_cost} কয়েন (প্রতি ভিডিও ২ কয়েন)"
+        balance_text = f"{user[1]} কয়েন"
+
+        confirm_msg = (
+            f"🎬 **ভিডিও অনুসন্ধানের ফলাফল:**\n\n"
+            f"• মোট ভিডিও পাওয়া গেছে: **{total_videos} টি**\n"
+            f"• মোট কয়েন খরচ হবে: **{cost_text}**\n"
+            f"• আপনার বর্তমান ব্যালেন্স: **{balance_text}**\n\n"
+            f"আপনি কি সবগুলো ভিডিও ডাউনলোড করতে চান?"
+        )
+
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        btn_confirm = types.InlineKeyboardButton("✅ নিশ্চিত করুন (Confirm)", callback_data="confirm_fb_all")
+        btn_cancel = types.InlineKeyboardButton("❌ বাতিল (Cancel)", callback_data="cancel_fb_all")
+        markup.add(btn_confirm, btn_cancel)
+
+        bot.edit_message_text(confirm_msg, user_id, status_msg.message_id, parse_mode="Markdown", reply_markup=markup)
+
+    except Exception as e:
+        bot.edit_message_text(f"⚠️ ভিডিও খুঁজতে সমস্যা হয়েছে: {str(e)[:120]}", user_id, status_msg.message_id)
+
+# ৭. নিশ্চিতকরণ পরবর্তী ডাউনলোড একশন
+@bot.callback_query_handler(func=lambda call: call.data in ["confirm_fb_all", "cancel_fb_all"])
+def handle_confirmation(call):
+    user_id = call.message.chat.id
+
+    if call.data == "cancel_fb_all":
+        PENDING_TASKS.pop(user_id, None)
+        bot.edit_message_text("❌ ভিডিও ডাউনলোড বাতিল করা হয়েছে।", user_id, call.message.message_id)
+        return
+
+    task = PENDING_TASKS.get(user_id)
+    if not task:
+        bot.edit_message_text("⚠️ অনুরোধটির মেয়াদ শেষ হয়ে গেছে। আবার পেজের লিংক দিন।", user_id, call.message.message_id)
+        return
+
+    user = get_user(user_id)
+    is_vip = task['is_vip']
+    total_cost = task['total_cost']
+    total_videos = task['total_videos']
+    entries = task['entries']
+
+    if not is_vip and user[1] < total_cost:
+        bot.answer_callback_query(call.id, f"❌ আপনার পর্যাপ্ত কয়েন নেই! প্রয়োজন {total_cost} কয়েন।", show_alert=True)
+        return
+
+    bot.edit_message_text(f"⏳ ডাউনলোড প্রক্রিয়া শুরু হয়েছে। মোট {total_videos}টি ভিডিও পাঠানো হবে...", user_id, call.message.message_id)
+
+    # ব্যাকগ্রাউন্ডে ভিডিও পাঠানো যাতে টেলিগ্রাম টাইমআউট না হয়
+    def run_batch_download():
+        success_count = 0
         for index, item in enumerate(entries, start=1):
-            user = get_user(user_id)
-            if not is_vip and user[1] < 2:
-                bot.send_message(user_id, f"⚠️ কয়েন শেষ হয়ে গেছে! {index-1}টি ভিডিও পাঠানোর পর প্রক্রিয়াটি বন্ধ করা হলো।")
+            curr_user = get_user(user_id)
+            if not is_vip and curr_user[1] < 2:
+                bot.send_message(user_id, f"⚠️ পর্যাপ্ত কয়েন না থাকায় {index-1}টি ভিডিওর পর ডাউনলোড বন্ধ হয়ে গেছে।")
                 break
 
             video_target_url = item.get('url') or item.get('webpage_url')
@@ -331,10 +405,9 @@ def handle_fb_all_videos(message):
                         if not is_vip:
                             update_coins(user_id, -2)
 
-                        # ক্লিক করলেই ক্যাপশন কপি হওয়া কোড ট্যাগ (<code>...</code>)
                         escaped_title = html.escape(video_title)
                         caption_text = (
-                            f"🎬 <b>ভিডিও {index}/{total_found}</b>\n\n"
+                            f"🎬 <b>ভিডিও {index}/{total_videos}</b>\n\n"
                             f"📝 <b>ক্যাপশন (ক্লিক করলে কপি হবে):</b>\n"
                             f"<code>{escaped_title}</code>\n\n"
                             f'video download by "<a href="https://t.me/mrghost_121">Mr Ghost</a>"'
@@ -342,18 +415,20 @@ def handle_fb_all_videos(message):
 
                         with open(file_path, 'rb') as vf:
                             bot.send_video(user_id, vf, caption=caption_text, parse_mode="HTML", supports_streaming=True)
+                        success_count += 1
             except Exception:
                 pass
             finally:
                 if os.path.exists(output_dir):
                     shutil.rmtree(output_dir, ignore_errors=True)
 
-        bot.send_message(user_id, "✅ ফেসবুক ভিডিও ডাউনলোড প্রক্রিয়া সম্পন্ন হয়েছে!")
+        PENDING_TASKS.pop(user_id, None)
+        rem_balance = get_user(user_id)[1]
+        bot.send_message(user_id, f"🎉 সফলভাবে {success_count}টি ভিডিও পাঠানো সম্পন্ন হয়েছে!\n🪙 বর্তমান ব্যালেন্স: {rem_balance} কয়েন")
 
-    except Exception as e:
-        bot.edit_message_text(f"⚠️ ভিডিও খুঁজতে সমস্যা হয়েছে: {str(e)[:120]}", user_id, status_msg.message_id)
+    threading.Thread(target=run_batch_download, daemon=True).start()
 
-# ৭. সাধারণ বাটন হ্যান্ডলার
+# ৮. সাধারণ বাটন হ্যান্ডলার
 @bot.callback_query_handler(func=lambda call: True)
 def user_callbacks(call):
     if call.data == "claim_bonus":
@@ -364,7 +439,7 @@ def user_callbacks(call):
         vip_tag = " (💎 প্রিমিয়াম মেম্বার)" if user[2] == 1 else ""
         bot.answer_callback_query(call.id, text=f"🪙 আপনার ব্যালেন্স: {user[1]} কয়েন{vip_tag}", show_alert=True)
 
-# ৮. সাধারণ সিঙ্গেল লিংক হ্যান্ডলার
+# ৯. সাধারণ সিঙ্গেল লিংক হ্যান্ডলার
 @bot.message_handler(func=lambda message: True)
 def process_single_video_link(message):
     raw_url = message.text.strip()
@@ -432,7 +507,6 @@ def process_single_video_link(message):
         else:
             coin_info = "💎 প্রিমিয়াম মেম্বার (কয়েন খরচ হয়নি)"
 
-        # ট্যাপ করলে কপি হওয়ার মতো ক্যাপশন
         escaped_title = html.escape(video_title)
         caption = (
             f"✅ ডাউনলোড সফল হয়েছে!\n"
