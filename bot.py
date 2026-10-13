@@ -12,7 +12,7 @@ from telebot import types
 import yt_dlp
 import requests
 
-# 1. Flask server to keep Render port alive
+# ১. Render Port সচল রাখতে Flask সার্ভার
 app = Flask(__name__)
 
 @app.route('/')
@@ -23,16 +23,16 @@ def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# 2. Telegram Bot Configuration
+# ২. টেলিগ্রাম কনফিগারেশন
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is missing!")
 
-ADMIN_ID = 5140546628  # Apnar Telegram Admin ID
+ADMIN_ID = 5140546628  # আপনার Telegram Admin ID
 bot = telebot.TeleBot(BOT_TOKEN)
 FFMPEG_DIR = os.path.abspath("ffmpeg_bin") if os.path.exists("ffmpeg_bin") else None
 
-# 3. Database Setup (SQLite)
+# ৩. ডাটাবেজ সেটআপ (SQLite)
 DB_PATH = "bot_database.db"
 
 def init_db():
@@ -86,12 +86,12 @@ def claim_daily_bonus(user_id):
 
     if row and row[0] == today_str:
         conn.close()
-        return False, "⚠️ Apni ajker 6 coin daily bonus already claim korechen! Agamikal abar ashben."
+        return False, "⚠️ আপনি আজকের দৈনিক ৬ কয়েন বোনাস ইতিমধ্যে গ্রহণ করেছেন! আগামীকাল পুনরায় চেষ্টা করুন।"
 
     cursor.execute("UPDATE users SET coins = coins + 6, last_bonus = ? WHERE user_id = ?", (today_str, user_id))
     conn.commit()
     conn.close()
-    return True, "🎉 Shobash! Apni shofolbhabe 6 coin daily bonus peyechen."
+    return True, "🎉 অভিনন্দন! আপনি সফলভাবে দৈনিক ৬ কয়েন বোনাস পেয়েছেন।"
 
 def resolve_url(url):
     try:
@@ -100,37 +100,37 @@ def resolve_url(url):
     except Exception:
         return url
 
-# Temporary pending downloads dictionary
+# পেন্ডিং ডাউনলোডের জন্য মেমোরি ক্যাশ
 PENDING_DOWNLOADS = {}
 
-# 4. /start Command
+# ৪. /start কমান্ড
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     user_id = message.from_user.id
     username = message.from_user.username or message.from_user.first_name
     user = get_user(user_id, username)
 
-    membership_status = "🌟 Premium Member (Unlimited)" if user[2] == 1 else "Normal User"
+    membership_status = "🌟 প্রিমিয়াম মেম্বার (আনলিমিটেড)" if user[2] == 1 else "সাধারণ ব্যবহারকারী"
 
     intro_text = (
-        f"👋 **Salam {message.from_user.first_name}!** 🚀\n\n"
-        "Ai bot bebohar kora khub-i shohoj! Shudhu apnar pochonder **video link chat-e pathiye din**, bot baki kaj automatic kore debe.\n\n"
-        "✨ **Supported Platforms:**\n"
-        "🔹 **Facebook** (Reels & Public Videos)\n"
-        "🔹 **TikTok** (No Watermark Videos)\n"
-        "🔹 **Instagram** (Reels & Posts)\n\n"
-        "📊 **Account Info:**\n"
-        f"• Status: **{membership_status}**\n"
-        f"• Bortoman Balance: `{user[1]}` Coins\n\n"
-        "💡 **Rules:**\n"
-        "• Proti video download: **2 Coin**\n"
-        "• Daily Free Bonus: **6 Coin**\n\n"
-        "👉 Download korte ekhoni kono video link send korun!"
+        f"👋 **সালাম {message.from_user.first_name}!** 🚀\n\n"
+        "এই বটটি ব্যবহার করা খুবই সহজ! আপনি কেবল যেকোনো **ভিডিওর লিংক চ্যাটে পাঠিয়ে দিন**, বাকি কাজ বট স্বয়ংক্রিয়ভাবে সম্পন্ন করবে।\n\n"
+        "✨ **সাপোর্টেড প্ল্যাটফর্মসমূহ:**\n"
+        "🔹 **Facebook** (Reels ও পাবলিক ভিডিও)\n"
+        "🔹 **TikTok** (ওয়াটারমার্ক ছাড়া ক্লিয়ার ভিডিও)\n"
+        "🔹 **Instagram** (Reels ও পোস্ট ভিডিও)\n\n"
+        "📊 **আপনার অ্যাকাউন্ট তথ্য:**\n"
+        f"• স্ট্যাটাস: **{membership_status}**\n"
+        f"• বর্তমান ব্যালেন্স: `{user[1]}` কয়েন\n\n"
+        "💡 **নিয়মাবলী:**\n"
+        "• প্রতি ভিডিও ডাউনলোড: **২ কয়েন**\n"
+        "• দৈনিক ফ্রি বোনাস: **৬ কয়েন**\n\n"
+        "👉 ভিডিও পেতে এখনই যেকোনো ভিডিওর লিংক মেসেজে পাঠান!"
     )
 
     markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_bonus = types.InlineKeyboardButton("🎁 Daily Bonus (+6)", callback_data="claim_bonus")
-    btn_bal = types.InlineKeyboardButton("💳 Balance Check", callback_data="my_balance")
+    btn_bonus = types.InlineKeyboardButton("🎁 দৈনিক বোনাস (+৬)", callback_data="claim_bonus")
+    btn_bal = types.InlineKeyboardButton("💳 ব্যালেন্স দেখুন", callback_data="my_balance")
     markup.add(btn_bonus, btn_bal)
 
     bot.reply_to(message, intro_text, parse_mode="Markdown", reply_markup=markup)
@@ -139,27 +139,27 @@ def start_cmd(message):
 def balance_cmd(message):
     user = get_user(message.from_user.id)
     vip_tag = " [💎 Premium]" if user[2] == 1 else ""
-    bot.reply_to(message, f"🪙 Apnar bortoman balance: **{user[1]} Coins**{vip_tag}", parse_mode="Markdown")
+    bot.reply_to(message, f"🪙 আপনার বর্তমান ব্যালেন্স: **{user[1]} কয়েন**{vip_tag}", parse_mode="Markdown")
 
 @bot.message_handler(commands=['daily'])
 def daily_cmd(message):
     success, msg = claim_daily_bonus(message.from_user.id)
     bot.reply_to(message, msg)
 
-# 5. Admin Panel UI (/ad)
+# ৫. এডমিন প্যানেল UI (/ad)
 @bot.message_handler(commands=['ad'])
 def admin_panel_cmd(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "⛔ Apni ai bot-er admin non!")
+        bot.reply_to(message, "⛔ আপনি এই বটের অ্যাডমিন নন!")
         return
 
-    admin_text = "👑 **Admin Control Dashboard**\n\nNicher button gulo diye manage korun:"
+    admin_text = "👑 **অ্যাডমিন কন্ট্রোল ড্যাশবোর্ড**\n\nনিচের বাটনগুলোর মাধ্যমে নিয়ন্ত্রণ করুন:"
     markup = types.InlineKeyboardMarkup(row_width=2)
-    b_chk = types.InlineKeyboardButton("🔍 Balance Check", callback_data="adm_check")
-    b_tot = types.InlineKeyboardButton("📊 Total Users", callback_data="adm_total")
-    b_add = types.InlineKeyboardButton("➕ Coin Add", callback_data="adm_add")
-    b_rmv = types.InlineKeyboardButton("➖ Coin Remove", callback_data="adm_remove")
-    b_vip = types.InlineKeyboardButton("💎 Premium Set", callback_data="adm_vip")
+    b_chk = types.InlineKeyboardButton("🔍 ব্যালেন্স চেক", callback_data="adm_check")
+    b_tot = types.InlineKeyboardButton("📊 মোট ব্যবহারকারী", callback_data="adm_total")
+    b_add = types.InlineKeyboardButton("➕ কয়েন যোগ", callback_data="adm_add")
+    b_rmv = types.InlineKeyboardButton("➖ কয়েন কাটুন", callback_data="adm_remove")
+    b_vip = types.InlineKeyboardButton("💎 প্রিমিয়াম সেট", callback_data="adm_vip")
     markup.add(b_chk, b_tot)
     markup.add(b_add, b_rmv)
     markup.add(b_vip)
@@ -169,7 +169,7 @@ def admin_panel_cmd(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_"))
 def admin_callbacks(call):
     if call.from_user.id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "Access Denied!", show_alert=True)
+        bot.answer_callback_query(call.id, "অ্যাক্সেস ডিনাইড!", show_alert=True)
         return
 
     data = call.data
@@ -181,32 +181,32 @@ def admin_callbacks(call):
         conn.close()
         total_users = row[0] or 0
         total_vip = row[1] or 0
-        bot.answer_callback_query(call.id, f"📊 Total Users: {total_users}\n💎 Premium Users: {total_vip}", show_alert=True)
+        bot.answer_callback_query(call.id, f"📊 মোট ব্যবহারকারী: {total_users}\n💎 প্রিমিয়াম ব্যবহারকারী: {total_vip}", show_alert=True)
 
     elif data == "adm_check":
-        msg = bot.send_message(call.message.chat.id, "🔍 Jar balance check korben tar **User ID** pathan:")
+        msg = bot.send_message(call.message.chat.id, "🔍 যার ব্যালেন্স চেক করবেন তার **User ID** পাঠান:")
         bot.register_next_step_handler(msg, step_check_balance)
 
     elif data == "adm_add":
-        msg = bot.send_message(call.message.chat.id, "➕ Coin add korte format: `USER_ID AMOUNT`", parse_mode="Markdown")
+        msg = bot.send_message(call.message.chat.id, "➕ কয়েন যোগ করার ফরম্যাট: `USER_ID AMOUNT`", parse_mode="Markdown")
         bot.register_next_step_handler(msg, step_add_coins)
 
     elif data == "adm_remove":
-        msg = bot.send_message(call.message.chat.id, "➖ Coin cut korte format: `USER_ID AMOUNT`", parse_mode="Markdown")
+        msg = bot.send_message(call.message.chat.id, "➖ কয়েন কাটার ফরম্যাট: `USER_ID AMOUNT`", parse_mode="Markdown")
         bot.register_next_step_handler(msg, step_remove_coins)
 
     elif data == "adm_vip":
-        msg = bot.send_message(call.message.chat.id, "💎 Premium change korte format: `USER_ID STATUS` (1 ba 0)", parse_mode="Markdown")
+        msg = bot.send_message(call.message.chat.id, "💎 প্রিমিয়াম পরিবর্তনের ফরম্যাট: `USER_ID STATUS` (১ বা ০)", parse_mode="Markdown")
         bot.register_next_step_handler(msg, step_toggle_vip)
 
 def step_check_balance(message):
     try:
         uid = int(message.text.strip())
         u = get_user(uid)
-        vip_str = "Hae" if u[2] == 1 else "Na"
-        bot.reply_to(message, f"👤 User: `{uid}`\n🪙 Coins: **{u[1]}**\n💎 Premium: **{vip_str}**", parse_mode="Markdown")
+        vip_str = "হ্যাঁ" if u[2] == 1 else "না"
+        bot.reply_to(message, f"👤 ইউজার: `{uid}`\n🪙 ব্যালেন্স: **{u[1]} কয়েন**\n💎 প্রিমিয়াম: **{vip_str}**", parse_mode="Markdown")
     except Exception:
-        bot.reply_to(message, "❌ Bhul ID dewa hoyeche.")
+        bot.reply_to(message, "❌ ভুল আইডি দেওয়া হয়েছে।")
 
 def step_add_coins(message):
     try:
@@ -215,9 +215,9 @@ def step_add_coins(message):
         get_user(uid)
         update_coins(uid, amt)
         u = get_user(uid)
-        bot.reply_to(message, f"✅ User `{uid}`-e **{amt}** coin add kora hoyeche. Balance: **{u[1]}**", parse_mode="Markdown")
+        bot.reply_to(message, f"✅ ইউজার `{uid}`-এ **{amt}** কয়েন যোগ করা হয়েছে। ব্যালেন্স: **{u[1]} কয়েন**", parse_mode="Markdown")
     except Exception:
-        bot.reply_to(message, "❌ Format thik nei! Format: `USER_ID AMOUNT`", parse_mode="Markdown")
+        bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID AMOUNT`", parse_mode="Markdown")
 
 def step_remove_coins(message):
     try:
@@ -226,9 +226,9 @@ def step_remove_coins(message):
         get_user(uid)
         update_coins(uid, -amt)
         u = get_user(uid)
-        bot.reply_to(message, f"✅ User `{uid}` theke **{amt}** coin kata hoyeche. Balance: **{u[1]}**", parse_mode="Markdown")
+        bot.reply_to(message, f"✅ ইউজার `{uid}` থেকে **{amt}** কয়েন কাটা হয়েছে। ব্যালেন্স: **{u[1]} কয়েন**", parse_mode="Markdown")
     except Exception:
-        bot.reply_to(message, "❌ Format thik nei! Format: `USER_ID AMOUNT`", parse_mode="Markdown")
+        bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID AMOUNT`", parse_mode="Markdown")
 
 def step_toggle_vip(message):
     try:
@@ -236,29 +236,27 @@ def step_toggle_vip(message):
         uid, st = int(parts[0]), int(parts[1])
         get_user(uid)
         set_premium(uid, st)
-        status_txt = "💎 Premium Active kora hoyeche." if st == 1 else "Normal Member kora hoyeche."
-        bot.reply_to(message, f"✅ User `{uid}` {status_txt}", parse_mode="Markdown")
+        status_txt = "💎 প্রিমিয়াম অ্যাক্টিভ করা হয়েছে।" if st == 1 else "সাধারণ মেম্বার করা হয়েছে।"
+        bot.reply_to(message, f"✅ ইউজার `{uid}` {status_txt}", parse_mode="Markdown")
     except Exception:
-        bot.reply_to(message, "❌ Format thik nei! Format: `USER_ID STATUS` (1 ba 0)", parse_mode="Markdown")
+        bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID STATUS` (১ বা ০)", parse_mode="Markdown")
 
-# 6. Video Link Received: Information Extract and Confirmation Request
+# ৬. ভিডিও লিংক গ্রহণ: তথ্য দেখানো এবং কনফার্মেশন চাওয়া
 @bot.message_handler(func=lambda message: True)
 def handle_incoming_link(message):
     raw_url = message.text.strip()
 
     if not (raw_url.startswith("http://") or raw_url.startswith("https://")):
-        bot.reply_to(message, "⚠️ Dayakore ekti shothik video URL pathan.")
+        bot.reply_to(message, "⚠️ দয়া করে একটি সঠিক ভিডিও URL পাঠান।")
         return
 
-    # YouTube ba Pinterest block kora
     if "youtu" in raw_url:
-        bot.reply_to(message, "⚠️ YouTube video ai bote support kore na! Facebook, Instagram, ba TikTok link pathan.")
+        bot.reply_to(message, "⚠️ ইউটিউব ভিডিও এই বটে সাপোর্ট করে না! ফেসবুক, ইনস্টাগ্রাম অথবা টিকটকের লিংক দিন।")
         return
 
-    # Shudhu Facebook, TikTok, Instagram allow kora
     valid_platforms = ["facebook.com", "fb.watch", "tiktok.com", "instagram.com"]
     if not any(p in raw_url.lower() for p in valid_platforms):
-        bot.reply_to(message, "⚠️ Shudhumatro Facebook, TikTok, ebong Instagram video link support kore.")
+        bot.reply_to(message, "⚠️ শুধুমাত্র ফেসবুক, টিকটক এবং ইনস্টাগ্রাম ভিডিও লিংক সাপোর্ট করে।")
         return
 
     user_id = message.chat.id
@@ -266,10 +264,10 @@ def handle_incoming_link(message):
     is_vip = user[2] == 1
 
     if not is_vip and user[1] < 2:
-        bot.reply_to(message, "❌ Apnar kache porjopto coin nei!\nVideo download korte **2 Coin** lagbe.\n\n`/daily` likhe free 6 coin bonus nin!", parse_mode="Markdown")
+        bot.reply_to(message, "❌ আপনার অ্যাকাউন্টে পর্যাপ্ত কয়েন নেই!\nভিডিও ডাউনলোড করতে **২ কয়েন** প্রয়োজন।\n\n`/daily` লিখে ফ্রি ৬ কয়েন বোনাস নিন!", parse_mode="Markdown")
         return
 
-    status_msg = bot.reply_to(message, "🔍 Video details check kora hocche...")
+    status_msg = bot.reply_to(message, "🔍 ভিডিওর তথ্য অনুসন্ধান করা হচ্ছে, দয়া করে অপেক্ষা করুন...")
     resolved_url = resolve_url(raw_url)
 
     ydl_opts_info = {
@@ -284,62 +282,60 @@ def handle_incoming_link(message):
     try:
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(resolved_url, download=False)
-            video_title = info.get('title') or info.get('description') or "Social Video"
-            # Limit title length
+            video_title = info.get('title') or info.get('description') or "সোশ্যাল ভিডিও"
             if len(video_title) > 200:
                 video_title = video_title[:200] + "..."
 
-        # Store in pending task
         PENDING_DOWNLOADS[user_id] = {
             'url': resolved_url,
             'title': video_title,
             'is_vip': is_vip
         }
 
-        cost_str = "0 Coin (💎 Premium)" if is_vip else "2 Coin"
+        cost_str = "০ কয়েন (💎 প্রিমিয়াম)" if is_vip else "২ কয়েন"
         escaped_title = html.escape(video_title)
 
         confirm_text = (
-            f"🎬 <b>Video Information:</b>\n\n"
-            f"📝 <b>Caption:</b>\n<code>{escaped_title}</code>\n\n"
-            f"💰 <b>Download Cost:</b> {cost_str}\n"
-            f"🪙 <b>Apnar Bortoman Balance:</b> {user[1]} Coins\n\n"
-            f"Apni ki video ti download korte chan?"
+            f"🎬 <b>ভিডিওর বিবরণ:</b>\n\n"
+            f"📝 <b>ক্যাপশন:</b>\n<code>{escaped_title}</code>\n\n"
+            f"💰 <b>ডাউনলোড খরচ:</b> {cost_str}\n"
+            f"🪙 <b>আপনার বর্তমান ব্যালেন্স:</b> {user[1]} কয়েন\n\n"
+            f"আপনি কি ভিডিওটি ডাউনলোড করতে চান?"
         )
 
         markup = types.InlineKeyboardMarkup(row_width=2)
-        btn_confirm = types.InlineKeyboardButton("✅ Confirm", callback_data="confirm_dl")
-        btn_cancel = types.InlineKeyboardButton("❌ Cancel", callback_data="cancel_dl")
+        btn_confirm = types.InlineKeyboardButton("✅ নিশ্চিত করুন (Confirm)", callback_data="confirm_dl")
+        btn_cancel = types.InlineKeyboardButton("❌ বাতিল (Cancel)", callback_data="cancel_dl")
         markup.add(btn_confirm, btn_cancel)
 
         bot.edit_message_text(confirm_text, user_id, status_msg.message_id, parse_mode="HTML", reply_markup=markup)
 
     except Exception as e:
-        bot.edit_message_text(f"⚠️ Video details pete shomossha hoyeche: {str(e)[:120]}", user_id, status_msg.message_id)
+        bot.edit_message_text(f"⚠️ ভিডিওর তথ্য পেতে সমস্যা হয়েছে: {str(e)[:120]}", user_id, status_msg.message_id)
 
-# 7. Confirmation Button Handler (Download & Send)
+# ৭. কনফার্মেশন বাটন হ্যান্ডলার (ডাউনলোড ও সেন্ড)
 @bot.callback_query_handler(func=lambda call: call.data in ["confirm_dl", "cancel_dl"])
 def handle_download_confirmation(call):
     user_id = call.message.chat.id
 
     if call.data == "cancel_dl":
         PENDING_DOWNLOADS.pop(user_id, None)
-        bot.edit_message_text("❌ Download batil kora hoyeche.", user_id, call.message.message_id)
+        bot.edit_message_text("❌ ভিডিও ডাউনলোড বাতিল করা হয়েছে।", user_id, call.message.message_id)
         return
 
     task = PENDING_DOWNLOADS.get(user_id)
     if not task:
-        bot.edit_message_text("⚠️ Request-er somoy sesh hoye geche. Abar link pathan.", user_id, call.message.message_id)
+        bot.edit_message_text("⚠️ অনুরোধটির মেয়াদ শেষ হয়ে গেছে। আবার লিংক পাঠান।", user_id, call.message.message_id)
         return
 
     user = get_user(user_id)
     is_vip = task['is_vip']
 
     if not is_vip and user[1] < 2:
-        bot.answer_callback_query(call.id, "❌ Apnar porjopto coin nei! Proyojon 2 coin.", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ আপনার পর্যাপ্ত কয়েন নেই! প্রয়োজন ২ কয়েন।", show_alert=True)
         return
 
-    bot.edit_message_text("⏳ Video download ebong Telegram-e processing hocche, ektu opeksha korun...", user_id, call.message.message_id)
+    bot.edit_message_text("⏳ ভিডিও ডাউনলোড ও টেলিগ্রামে প্রসেস করা হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...", user_id, call.message.message_id)
 
     target_url = task['url']
     video_title = task['title']
@@ -366,17 +362,16 @@ def handle_download_confirmation(call):
 
         files = glob.glob(f"{output_dir}/*")
         if not files:
-            bot.send_message(user_id, "❌ Video download kora jayni ba 50MB er beshi size.")
+            bot.send_message(user_id, "❌ ভিডিও ডাউনলোড করা সম্ভব হয়নি অথবা ফাইলের সাইজ ৫০MB-এর বেশি।")
             return
 
         file_path = files[0]
         file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
 
         if file_size_mb > 49.5:
-            bot.send_message(user_id, "❌ File size 50MB er beshi, Telegram a pathano shombhob na.")
+            bot.send_message(user_id, "❌ ভিডিও সাইজ ৫০MB-এর বেশি হওয়ায় টেলিগ্রামে পাঠানো সম্ভব নয়।")
             return
 
-        # Coin deduction
         if not is_vip:
             update_coins(user_id, -2)
             rem_coins = get_user(user_id)[1]
@@ -399,14 +394,14 @@ def handle_download_confirmation(call):
         bot.delete_message(user_id, call.message.message_id)
 
     except Exception as e:
-        bot.send_message(user_id, f"⚠️ Error: {str(e)[:120]}")
+        bot.send_message(user_id, f"⚠️ ত্রুটি: {str(e)[:120]}")
 
     finally:
         PENDING_DOWNLOADS.pop(user_id, None)
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir, ignore_errors=True)
 
-# 8. Generic Inline Callback Query Handler
+# ৮. সাধারণ বাটন হ্যান্ডলার
 @bot.callback_query_handler(func=lambda call: True)
 def user_callbacks(call):
     if call.data == "claim_bonus":
@@ -414,8 +409,8 @@ def user_callbacks(call):
         bot.answer_callback_query(call.id, text=msg, show_alert=True)
     elif call.data == "my_balance":
         user = get_user(call.from_user.id)
-        vip_tag = " (💎 Premium Member)" if user[2] == 1 else ""
-        bot.answer_callback_query(call.id, text=f"🪙 Balance: {user[1]} Coins{vip_tag}", show_alert=True)
+        vip_tag = " (💎 প্রিমিয়াম মেম্বার)" if user[2] == 1 else ""
+        bot.answer_callback_query(call.id, text=f"🪙 আপনার ব্যালেন্স: {user[1]} কয়েন{vip_tag}", show_alert=True)
 
 if __name__ == "__main__":
     init_db()
