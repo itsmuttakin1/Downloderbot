@@ -100,8 +100,83 @@ def resolve_url(url):
     except Exception:
         return url
 
-# পেন্ডিং ডাউনলোডের জন্য মেমোরি ক্যাশ
+# সাধারণ ইউজারদের পেন্ডিং ডাউনলোডের মেমোরি ক্যাশ
 PENDING_DOWNLOADS = {}
+
+# ভিডিও ডাউনলোড ও ডেলিভারি করার সেন্ট্রাল ফাংশন
+def download_and_send_video(user_id, target_url, video_title, is_vip, status_msg_id=None):
+    output_dir = f"downloads/{user_id}"
+    os.makedirs(output_dir, exist_ok=True)
+
+    ydl_opts = {
+        'format': 'best[filesize<48M]/bestvideo[filesize<35M]+bestaudio[filesize<10M]/best',
+        'merge_output_format': 'mp4',
+        'outtmpl': f'{output_dir}/%(id)s.%(ext)s',
+        'quiet': True,
+        'no_warnings': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        }
+    }
+
+    if FFMPEG_DIR:
+        ydl_opts['ffmpeg_location'] = FFMPEG_DIR
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([target_url])
+
+        files = glob.glob(f"{output_dir}/*")
+        if not files:
+            bot.send_message(user_id, "❌ ভিডিও ডাউনলোড করা সম্ভব হয়নি অথবা ফাইলের সাইজ ৫০MB-এর বেশি।")
+            if status_msg_id:
+                try: bot.delete_message(user_id, status_msg_id)
+                except Exception: pass
+            return
+
+        file_path = files[0]
+        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+
+        if file_size_mb > 49.5:
+            bot.send_message(user_id, "❌ ভিডিও সাইজ ৫০MB-এর বেশি হওয়ায় টেলিগ্রামে পাঠানো সম্ভব নয়।")
+            if status_msg_id:
+                try: bot.delete_message(user_id, status_msg_id)
+                except Exception: pass
+            return
+
+        # কয়েন কর্তন
+        if not is_vip:
+            update_coins(user_id, -2)
+            rem_coins = get_user(user_id)[1]
+            coin_info = f"🪙 ২ কয়েন কাটা হয়েছে | অবশিষ্ট ব্যালেন্স: {rem_coins} কয়েন"
+        else:
+            coin_info = "💎 প্রিমিয়াম মেম্বার (কয়েন খরচ হয়নি)"
+
+        escaped_title = html.escape(video_title)
+        caption_text = (
+            f"✅ ডাউনলোড সফল হয়েছে!\n"
+            f"{coin_info}\n\n"
+            f"📝 <b>ক্যাপশন (ক্লিক করলে কপি হবে):</b>\n"
+            f"<code>{escaped_title}</code>\n\n"
+            f'video download by "<a href="https://t.me/mrghost_121">Mr Ghost</a>"'
+        )
+
+        with open(file_path, 'rb') as vf:
+            bot.send_video(user_id, vf, caption=caption_text, parse_mode="HTML", supports_streaming=True)
+
+        if status_msg_id:
+            try: bot.delete_message(user_id, status_msg_id)
+            except Exception: pass
+
+    except Exception as e:
+        bot.send_message(user_id, f"⚠️ ত্রুটি: {str(e)[:120]}")
+        if status_msg_id:
+            try: bot.delete_message(user_id, status_msg_id)
+            except Exception: pass
+
+    finally:
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir, ignore_errors=True)
 
 # ৪. /start কমান্ড
 @bot.message_handler(commands=['start'])
@@ -117,12 +192,12 @@ def start_cmd(message):
         "এই বটটি ব্যবহার করা খুবই সহজ! আপনি কেবল যেকোনো **ভিডিওর লিংক চ্যাটে পাঠিয়ে দিন**, বাকি কাজ বট স্বয়ংক্রিয়ভাবে সম্পন্ন করবে।\n\n"
         "✨ **সাপোর্টেড প্ল্যাটফর্মসমূহ:**\n"
         "🔹 **Facebook** (Reels ও পাবলিক ভিডিও)\n"
-        "🔹 **TikTok** (ওয়াটারমার্ক ছাড়া ক্লিয়ার ভিডিও)\n"
+        "🔹 **TikTok** (ওয়াটারমার্ক ছাড়া ক্লিয়ার ভিডিও)\n"
         "🔹 **Instagram** (Reels ও পোস্ট ভিডিও)\n\n"
         "📊 **আপনার অ্যাকাউন্ট তথ্য:**\n"
         f"• স্ট্যাটাস: **{membership_status}**\n"
         f"• বর্তমান ব্যালেন্স: `{user[1]}` কয়েন\n\n"
-        "💡 **নিয়মাবলী:**\n"
+        "💡 **নিয়মাবলী:**\n"
         "• প্রতি ভিডিও ডাউনলোড: **২ কয়েন**\n"
         "• দৈনিক ফ্রি বোনাস: **৬ কয়েন**\n\n"
         "👉 ভিডিও পেতে এখনই যেকোনো ভিডিওর লিংক মেসেজে পাঠান!"
@@ -241,7 +316,7 @@ def step_toggle_vip(message):
     except Exception:
         bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID STATUS` (১ বা ০)", parse_mode="Markdown")
 
-# ৬. ভিডিও লিংক গ্রহণ: তথ্য দেখানো এবং কনফার্মেশন চাওয়া
+# ৬. ভিডিও লিংক গ্রহণ: প্রিমিয়াম হলে সরাসরি ডাউনলোড, সাধারণ হলে কনফার্মেশন পপ-আপ
 @bot.message_handler(func=lambda message: True)
 def handle_incoming_link(message):
     raw_url = message.text.strip()
@@ -263,12 +338,38 @@ def handle_incoming_link(message):
     user = get_user(user_id)
     is_vip = user[2] == 1
 
+    # সাধারণ ইউজারের ব্যালেন্স চেক
     if not is_vip and user[1] < 2:
         bot.reply_to(message, "❌ আপনার অ্যাকাউন্টে পর্যাপ্ত কয়েন নেই!\nভিডিও ডাউনলোড করতে **২ কয়েন** প্রয়োজন।\n\n`/daily` লিখে ফ্রি ৬ কয়েন বোনাস নিন!", parse_mode="Markdown")
         return
 
-    status_msg = bot.reply_to(message, "🔍 ভিডিওর তথ্য অনুসন্ধান করা হচ্ছে, দয়া করে অপেক্ষা করুন...")
     resolved_url = resolve_url(raw_url)
+
+    # 💎 প্রিমিয়াম ইউজার: কোনো পপ-আপ ছাড়াই সরাসরি ডাউনলোড
+    if is_vip:
+        status_msg = bot.reply_to(message, "💎 প্রিমিয়াম অ্যাক্টিভ: ভিডিও সরাসরি ডাউনলোড ও প্রসেস করা হচ্ছে...")
+        ydl_opts_info = {
+            'extract_flat': False,
+            'quiet': True,
+            'no_warnings': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            }
+        }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+                info = ydl.extract_info(resolved_url, download=False)
+                video_title = info.get('title') or info.get('description') or "সোশ্যাল ভিডিও"
+                if len(video_title) > 200:
+                    video_title = video_title[:200] + "..."
+        except Exception:
+            video_title = "সোশ্যাল ভিডিও"
+
+        download_and_send_video(user_id, resolved_url, video_title, is_vip=True, status_msg_id=status_msg.message_id)
+        return
+
+    # 👤 সাধারণ ইউজার: ক্যাপশন, কয়েন খরচ ও কনফার্মেশন পপ-আপ
+    status_msg = bot.reply_to(message, "🔍 ভিডিওর তথ্য অনুসন্ধান করা হচ্ছে, দয়া করে অপেক্ষা করুন...")
 
     ydl_opts_info = {
         'extract_flat': False,
@@ -289,16 +390,14 @@ def handle_incoming_link(message):
         PENDING_DOWNLOADS[user_id] = {
             'url': resolved_url,
             'title': video_title,
-            'is_vip': is_vip
+            'is_vip': False
         }
 
-        cost_str = "০ কয়েন (💎 প্রিমিয়াম)" if is_vip else "২ কয়েন"
         escaped_title = html.escape(video_title)
-
         confirm_text = (
             f"🎬 <b>ভিডিওর বিবরণ:</b>\n\n"
             f"📝 <b>ক্যাপশন:</b>\n<code>{escaped_title}</code>\n\n"
-            f"💰 <b>ডাউনলোড খরচ:</b> {cost_str}\n"
+            f"💰 <b>ডাউনলোড খরচ:</b> ২ কয়েন\n"
             f"🪙 <b>আপনার বর্তমান ব্যালেন্স:</b> {user[1]} কয়েন\n\n"
             f"আপনি কি ভিডিওটি ডাউনলোড করতে চান?"
         )
@@ -313,7 +412,7 @@ def handle_incoming_link(message):
     except Exception as e:
         bot.edit_message_text(f"⚠️ ভিডিওর তথ্য পেতে সমস্যা হয়েছে: {str(e)[:120]}", user_id, status_msg.message_id)
 
-# ৭. কনফার্মেশন বাটন হ্যান্ডলার (ডাউনলোড ও সেন্ড)
+# ৭. সাধারণ ইউজারের কনফার্মেশন বাটন হ্যান্ডলার
 @bot.callback_query_handler(func=lambda call: call.data in ["confirm_dl", "cancel_dl"])
 def handle_download_confirmation(call):
     user_id = call.message.chat.id
@@ -329,77 +428,13 @@ def handle_download_confirmation(call):
         return
 
     user = get_user(user_id)
-    is_vip = task['is_vip']
-
-    if not is_vip and user[1] < 2:
+    if user[1] < 2:
         bot.answer_callback_query(call.id, "❌ আপনার পর্যাপ্ত কয়েন নেই! প্রয়োজন ২ কয়েন।", show_alert=True)
         return
 
     bot.edit_message_text("⏳ ভিডিও ডাউনলোড ও টেলিগ্রামে প্রসেস করা হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...", user_id, call.message.message_id)
-
-    target_url = task['url']
-    video_title = task['title']
-    output_dir = f"downloads/{user_id}"
-    os.makedirs(output_dir, exist_ok=True)
-
-    ydl_opts = {
-        'format': 'best[filesize<48M]/bestvideo[filesize<35M]+bestaudio[filesize<10M]/best',
-        'merge_output_format': 'mp4',
-        'outtmpl': f'{output_dir}/%(id)s.%(ext)s',
-        'quiet': True,
-        'no_warnings': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        }
-    }
-
-    if FFMPEG_DIR:
-        ydl_opts['ffmpeg_location'] = FFMPEG_DIR
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([target_url])
-
-        files = glob.glob(f"{output_dir}/*")
-        if not files:
-            bot.send_message(user_id, "❌ ভিডিও ডাউনলোড করা সম্ভব হয়নি অথবা ফাইলের সাইজ ৫০MB-এর বেশি।")
-            return
-
-        file_path = files[0]
-        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-
-        if file_size_mb > 49.5:
-            bot.send_message(user_id, "❌ ভিডিও সাইজ ৫০MB-এর বেশি হওয়ায় টেলিগ্রামে পাঠানো সম্ভব নয়।")
-            return
-
-        if not is_vip:
-            update_coins(user_id, -2)
-            rem_coins = get_user(user_id)[1]
-            coin_info = f"🪙 ২ কয়েন কাটা হয়েছে | অবশিষ্ট ব্যালেন্স: {rem_coins} কয়েন"
-        else:
-            coin_info = "💎 প্রিমিয়াম মেম্বার (কয়েন খরচ হয়নি)"
-
-        escaped_title = html.escape(video_title)
-        caption_text = (
-            f"✅ ডাউনলোড সফল হয়েছে!\n"
-            f"{coin_info}\n\n"
-            f"📝 <b>ক্যাপশন (ক্লিক করলে কপি হবে):</b>\n"
-            f"<code>{escaped_title}</code>\n\n"
-            f'video download by "<a href="https://t.me/mrghost_121">Mr Ghost</a>"'
-        )
-
-        with open(file_path, 'rb') as vf:
-            bot.send_video(user_id, vf, caption=caption_text, parse_mode="HTML", supports_streaming=True)
-
-        bot.delete_message(user_id, call.message.message_id)
-
-    except Exception as e:
-        bot.send_message(user_id, f"⚠️ ত্রুটি: {str(e)[:120]}")
-
-    finally:
-        PENDING_DOWNLOADS.pop(user_id, None)
-        if os.path.exists(output_dir):
-            shutil.rmtree(output_dir, ignore_errors=True)
+    download_and_send_video(user_id, task['url'], task['title'], is_vip=False, status_msg_id=call.message.message_id)
+    PENDING_DOWNLOADS.pop(user_id, None)
 
 # ৮. সাধারণ বাটন হ্যান্ডলার
 @bot.callback_query_handler(func=lambda call: True)
