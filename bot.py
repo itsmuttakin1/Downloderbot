@@ -32,66 +32,79 @@ ADMIN_ID = 5140546628  # আপনার Telegram Admin ID
 bot = telebot.TeleBot(BOT_TOKEN)
 FFMPEG_DIR = os.path.abspath("ffmpeg_bin") if os.path.exists("ffmpeg_bin") else None
 
-# ৩. ডাটাবেজ সেটআপ (SQLite)
+# ৩. ডাটাবেজ সেটআপ (লক ঠেকানোর সম্পূর্ণ নিরাপদ সিস্টেম)
 DB_PATH = "bot_database.db"
+db_mutex = threading.Lock()
+
+def get_db_connection():
+    # timeout=30 দিলে লক ছাড়ার জন্য ৩০ সেকেন্ড পর্যন্ত অপেক্ষা করবে
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL;")  # কনকারেন্ট রিড/রাইট সাপোর্ট
+    conn.execute("PRAGMA busy_timeout = 30000;")
+    return conn
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            coins INTEGER DEFAULT 10,
-            is_premium INTEGER DEFAULT 0,
-            last_bonus DATE
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    with db_mutex:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                coins INTEGER DEFAULT 10,
+                is_premium INTEGER DEFAULT 0,
+                last_bonus DATE
+            )
+        ''')
+        conn.commit()
+        conn.close()
 
 def get_user(user_id, username=""):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id, coins, is_premium, last_bonus FROM users WHERE user_id = ?", (user_id,))
-    user = cursor.fetchone()
-    if not user:
-        cursor.execute("INSERT INTO users (user_id, username, coins, is_premium, last_bonus) VALUES (?, ?, 10, 0, NULL)", (user_id, username))
-        conn.commit()
+    with db_mutex:
+        conn = get_db_connection()
+        cursor = conn.cursor()
         cursor.execute("SELECT user_id, coins, is_premium, last_bonus FROM users WHERE user_id = ?", (user_id,))
         user = cursor.fetchone()
-    conn.close()
-    return user
+        if not user:
+            cursor.execute("INSERT OR IGNORE INTO users (user_id, username, coins, is_premium, last_bonus) VALUES (?, ?, 10, 0, NULL)", (user_id, username))
+            conn.commit()
+            cursor.execute("SELECT user_id, coins, is_premium, last_bonus FROM users WHERE user_id = ?", (user_id,))
+            user = cursor.fetchone()
+        conn.close()
+        return user
 
 def update_coins(user_id, amount):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET coins = coins + ? WHERE user_id = ?", (amount, user_id))
-    conn.commit()
-    conn.close()
+    with db_mutex:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET coins = coins + ? WHERE user_id = ?", (amount, user_id))
+        conn.commit()
+        conn.close()
 
 def set_premium(user_id, status=1):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET is_premium = ? WHERE user_id = ?", (status, user_id))
-    conn.commit()
-    conn.close()
+    with db_mutex:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET is_premium = ? WHERE user_id = ?", (status, user_id))
+        conn.commit()
+        conn.close()
 
 def claim_daily_bonus(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    today_str = date.today().isoformat()
-    cursor.execute("SELECT last_bonus FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
+    with db_mutex:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        today_str = date.today().isoformat()
+        cursor.execute("SELECT last_bonus FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
 
-    if row and row[0] == today_str:
+        if row and row[0] == today_str:
+            conn.close()
+            return False, "⚠️ আপনি আজকের দৈনিক ৬ কয়েন বোনাস ইতিমধ্যে গ্রহণ করেছেন! আগামীকাল পুনরায় চেষ্টা করুন।"
+
+        cursor.execute("UPDATE users SET coins = coins + 6, last_bonus = ? WHERE user_id = ?", (today_str, user_id))
+        conn.commit()
         conn.close()
-        return False, "⚠️ আপনি আজকের দৈনিক ৬ কয়েন বোনাস ইতিমধ্যে গ্রহণ করেছেন! আগামীকাল পুনরায় চেষ্টা করুন।"
-
-    cursor.execute("UPDATE users SET coins = coins + 6, last_bonus = ? WHERE user_id = ?", (today_str, user_id))
-    conn.commit()
-    conn.close()
-    return True, "🎉 অভিনন্দন! আপনি সফলভাবে দৈনিক ৬ কয়েন বোনাস পেয়েছেন।"
+        return True, "🎉 অভিনন্দন! আপনি সফলভাবে দৈনিক ৬ কয়েন বোনাস পেয়েছেন।"
 
 def resolve_url(url):
     try:
@@ -105,7 +118,7 @@ PENDING_DOWNLOADS = {}
 
 # ভিডিও ডাউনলোড ও ডেলিভারি করার সেন্ট্রাল ফাংশন
 def download_and_send_video(user_id, target_url, video_title, is_vip, status_msg_id=None):
-    output_dir = f"downloads/{user_id}"
+    output_dir = f"downloads/{user_id}_{int(time.time())}"
     os.makedirs(output_dir, exist_ok=True)
 
     ydl_opts = {
@@ -249,11 +262,12 @@ def admin_callbacks(call):
 
     data = call.data
     if data == "adm_total":
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*), SUM(is_premium) FROM users")
-        row = cursor.fetchone()
-        conn.close()
+        with db_mutex:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*), SUM(is_premium) FROM users")
+            row = cursor.fetchone()
+            conn.close()
         total_users = row[0] or 0
         total_vip = row[1] or 0
         bot.answer_callback_query(call.id, f"📊 মোট ব্যবহারকারী: {total_users}\n💎 প্রিমিয়াম ব্যবহারকারী: {total_vip}", show_alert=True)
@@ -316,7 +330,7 @@ def step_toggle_vip(message):
     except Exception:
         bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID STATUS` (১ বা ০)", parse_mode="Markdown")
 
-# ৬. ভিডিও লিংক গ্রহণ: প্রিমিয়াম হলে সরাসরি ডাউনলোড, সাধারণ হলে কনফার্মেশন পপ-আপ
+# ৬. ভিডিও লিংক গ্রহণ
 @bot.message_handler(func=lambda message: True)
 def handle_incoming_link(message):
     raw_url = message.text.strip()
@@ -338,14 +352,13 @@ def handle_incoming_link(message):
     user = get_user(user_id)
     is_vip = user[2] == 1
 
-    # সাধারণ ইউজারের ব্যালেন্স চেক
     if not is_vip and user[1] < 2:
         bot.reply_to(message, "❌ আপনার অ্যাকাউন্টে পর্যাপ্ত কয়েন নেই!\nভিডিও ডাউনলোড করতে **২ কয়েন** প্রয়োজন।\n\n`/daily` লিখে ফ্রি ৬ কয়েন বোনাস নিন!", parse_mode="Markdown")
         return
 
     resolved_url = resolve_url(raw_url)
 
-    # 💎 প্রিমিয়াম ইউজার: কোনো পপ-আপ ছাড়াই সরাসরি ডাউনলোড
+    # 💎 প্রিমিয়াম ইউজার: সরাসরি ডাউনলোড
     if is_vip:
         status_msg = bot.reply_to(message, "💎 প্রিমিয়াম অ্যাক্টিভ: ভিডিও সরাসরি ডাউনলোড ও প্রসেস করা হচ্ছে...")
         ydl_opts_info = {
@@ -368,7 +381,7 @@ def handle_incoming_link(message):
         download_and_send_video(user_id, resolved_url, video_title, is_vip=True, status_msg_id=status_msg.message_id)
         return
 
-    # 👤 সাধারণ ইউজার: ক্যাপশন, কয়েন খরচ ও কনফার্মেশন পপ-আপ
+    # 👤 সাধারণ ইউজার: ক্যাপশন ও কনফার্মেশন পপ-আপ
     status_msg = bot.reply_to(message, "🔍 ভিডিওর তথ্য অনুসন্ধান করা হচ্ছে, দয়া করে অপেক্ষা করুন...")
 
     ydl_opts_info = {
@@ -412,7 +425,7 @@ def handle_incoming_link(message):
     except Exception as e:
         bot.edit_message_text(f"⚠️ ভিডিওর তথ্য পেতে সমস্যা হয়েছে: {str(e)[:120]}", user_id, status_msg.message_id)
 
-# ৭. সাধারণ ইউজারের কনফার্মেশন বাটন হ্যান্ডলার
+# ৭. কনফার্মেশন বাটন হ্যান্ডলার
 @bot.callback_query_handler(func=lambda call: call.data in ["confirm_dl", "cancel_dl"])
 def handle_download_confirmation(call):
     user_id = call.message.chat.id
