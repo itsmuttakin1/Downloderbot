@@ -1,9 +1,11 @@
 import os
+import sys
 import glob
 import time
 import html
 import shutil
 import sqlite3
+import traceback
 import threading
 from datetime import datetime, date
 from flask import Flask, request, jsonify, render_template_string, send_file
@@ -12,7 +14,7 @@ from telebot import types
 import yt_dlp
 import requests
 
-# ১. Flask ওয়েব সার্ভার ও রেসপনসিভ ডাউনলোডার পেজ
+# ১. Render Port ও Flask সার্ভার কনফিগারেশন
 app = Flask(__name__)
 
 HTML_TEMPLATE = """
@@ -27,7 +29,6 @@ HTML_TEMPLATE = """
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between font-sans">
     <div class="max-w-3xl mx-auto w-full px-4 py-12 flex-grow flex flex-col justify-center">
-        <!-- Brand Header -->
         <div class="text-center mb-8">
             <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/20 mb-4">
                 <i class="fa-solid fa-cloud-arrow-down text-2xl text-white"></i>
@@ -36,11 +37,10 @@ HTML_TEMPLATE = """
                 Universal <span class="text-cyan-400">Downloader</span>
             </h1>
             <p class="text-slate-400 mt-2 text-sm md:text-base">
-                YouTube, Facebook, TikTok, Instagram, Pinterest সহ যেকোনো ভিডিও ডাউনলোড করুন
+                YouTube, Facebook, TikTok, Instagram, Pinterest সহ যেকোনো ভিডিও সহজে ডাউনলোড করুন
             </p>
         </div>
 
-        <!-- Download Card -->
         <div class="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl backdrop-blur-xl">
             <form id="downloadForm" class="space-y-4">
                 <div>
@@ -61,7 +61,6 @@ HTML_TEMPLATE = """
                 </button>
             </form>
 
-            <!-- Status Box -->
             <div id="statusBox" class="hidden mt-6 text-center">
                 <div class="inline-flex items-center gap-3 px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-cyan-400">
                     <svg class="animate-spin h-4 w-4 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -72,7 +71,6 @@ HTML_TEMPLATE = """
                 </div>
             </div>
 
-            <!-- Result Box -->
             <div id="resultBox" class="hidden mt-6 p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div class="truncate w-full sm:w-auto">
                     <p id="videoTitle" class="text-sm font-medium text-slate-200 truncate max-w-sm"></p>
@@ -85,7 +83,6 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- Telegram Link -->
         <div class="mt-8 text-center">
             <a href="https://t.me/mrghost_121" target="_blank" class="inline-flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-cyan-400 transition-colors">
                 <i class="fa-brands fa-telegram text-base text-cyan-400"></i>
@@ -150,7 +147,6 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# শর্টলিংক বা রিডাইরেক্ট হওয়া আসল URL পাওয়ার ফাংশন
 def resolve_url(url):
     try:
         res = requests.head(url, allow_redirects=True, timeout=12)
@@ -158,10 +154,10 @@ def resolve_url(url):
     except Exception:
         return url
 
-# yt-dlp সার্বজনীন অপশন (YouTube cookies.txt ও Pinterest ফিক্সসহ)
+FFMPEG_DIR = os.path.abspath("ffmpeg_bin") if os.path.exists("ffmpeg_bin") else None
+
 def get_ydl_options(output_path):
     opts = {
-        # Pinterest ও অন্যান্য সাইটের ফরম্যাট মিসিং এরর এড়াতে নমনীয় ফরম্যাট
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'merge_output_format': 'mp4',
         'outtmpl': output_path,
@@ -177,14 +173,10 @@ def get_ydl_options(output_path):
             }
         }
     }
-
     if FFMPEG_DIR:
         opts['ffmpeg_location'] = FFMPEG_DIR
-
-    # cookies.txt ফাইল পাওয়া গেলে স্বয়ংক্রিয়ভাবে লোড হবে
     if os.path.exists("cookies.txt"):
         opts['cookiefile'] = "cookies.txt"
-
     return opts
 
 @app.route('/')
@@ -234,19 +226,21 @@ def serve_downloaded_file(folder, filename):
     return "File Not Found", 404
 
 def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 10000))
+    print(f"[*] Starting Web Server on port {port}...", flush=True)
+    app.run(host="0.0.0.0", port=port, use_reloader=False, threaded=True)
 
-# ২. টেলিগ্রাম বট কনফিগারেশন
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# ২. টেলিগ্রাম কনফিগারেশন ও সেফটি চেক
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+ADMIN_ID = 5140546628
+
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN environment variable is missing!")
+    print("❌ CRITICAL ERROR: BOT_TOKEN is missing in Render Environment Variables!", flush=True)
+    print("👉 Please add BOT_TOKEN in Render Dashboard -> Settings -> Environment Variables.", flush=True)
 
-ADMIN_ID = 5140546628  # আপনার Telegram Admin ID
-bot = telebot.TeleBot(BOT_TOKEN)
-FFMPEG_DIR = os.path.abspath("ffmpeg_bin") if os.path.exists("ffmpeg_bin") else None
+bot = telebot.TeleBot(BOT_TOKEN) if BOT_TOKEN else None
 
-# ৩. ডাটাবেজ সেটআপ (লক ঠেকানোর মিউটেক্স ও WAL মোড)
+# ৩. ডাটাবেজ সেটআপ
 DB_PATH = "bot_database.db"
 db_mutex = threading.Lock()
 
@@ -321,8 +315,9 @@ def claim_daily_bonus(user_id):
 
 PENDING_DOWNLOADS = {}
 
-# ভিডিও ডাউনলোড ও টেলিগ্রামে ডেলিভারি ফাংশন
 def download_and_send_video(user_id, target_url, video_title, is_vip, status_msg_id=None):
+    if not bot:
+        return
     output_dir = f"downloads/{user_id}_{int(time.time())}"
     os.makedirs(output_dir, exist_ok=True)
     out_template = f'{output_dir}/%(id)s.%(ext)s'
@@ -384,211 +379,278 @@ def download_and_send_video(user_id, target_url, video_title, is_vip, status_msg
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir, ignore_errors=True)
 
-# ৪. /start কমান্ড
-@bot.message_handler(commands=['start'])
-def start_cmd(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    user = get_user(user_id, username)
+if bot:
+    @bot.message_handler(commands=['start'])
+    def start_cmd(message):
+        user_id = message.from_user.id
+        username = message.from_user.username or message.from_user.first_name
+        user = get_user(user_id, username)
 
-    membership_status = "🌟 প্রিমিয়াম মেম্বার (আনলিমিটেড)" if user[2] == 1 else "সাধারণ ব্যবহারকারী"
+        membership_status = "🌟 প্রিমিয়াম মেম্বার (আনলিমিটেড)" if user[2] == 1 else "সাধারণ ব্যবহারকারী"
 
-    intro_text = (
-        f"👋 **সালাম {message.from_user.first_name}!** 🚀\n\n"
-        "এই বটটি ব্যবহার করা খুবই সহজ! আপনি কেবল যেকোনো **সোশ্যাল মিডিয়া বা ভিডিও লিংক চ্যাটে পাঠিয়ে দিন**, বাকি কাজ বট স্বয়ংক্রিয়ভাবে সম্পন্ন করবে।\n\n"
-        "✨ **সাপোর্টেড প্ল্যাটফর্মসমূহ:**\n"
-        "🔹 YouTube, Facebook, TikTok, Instagram\n"
-        "🔹 Pinterest, Twitter (X), Reddit, Threads সহ যেকোনো সাইট\n\n"
-        "📊 **আপনার অ্যাকাউন্ট তথ্য:**\n"
-        f"• স্ট্যাটাস: **{membership_status}**\n"
-        f"• বর্তমান ব্যালেন্স: `{user[1]}` কয়েন\n\n"
-        "💡 **নিয়মাবলী:**\n"
-        "• প্রতি ভিডিও ডাউনলোড: **২ কয়েন**\n"
-        "• দৈনিক ফ্রি বোনাস: **৬ কয়েন**\n\n"
-        "👉 ভিডিও পেতে এখনই যেকোনো ভিডিওর লিংক মেসেজে পাঠান!"
-    )
+        intro_text = (
+            f"👋 **সালাম {message.from_user.first_name}!** 🚀\n\n"
+            "এই বটটি ব্যবহার করা খুবই সহজ! যেকোনো **ভিডিও লিংক চ্যাটে পাঠিয়ে দিন**, বাকি কাজ বট স্বয়ংক্রিয়ভাবে সম্পন্ন করবে।\n\n"
+            "✨ **সাপোর্টেড প্ল্যাটফর্মসমূহ:**\n"
+            "🔹 YouTube, Facebook, TikTok, Instagram\n"
+            "🔹 Pinterest, Twitter (X), Reddit, Threads সহ যেকোনো সাইট\n\n"
+            "📊 **আপনার অ্যাকাউন্ট তথ্য:**\n"
+            f"• স্ট্যাটাস: **{membership_status}**\n"
+            f"• বর্তমান ব্যালেন্স: `{user[1]}` কয়েন\n\n"
+            "💡 **নিয়মাবলী:**\n"
+            "• প্রতি ভিডিও ডাউনলোড: **২ কয়েন**\n"
+            "• দৈনিক ফ্রি বোনাস: **৬ কয়েন**\n\n"
+            "👉 ভিডিও পেতে এখনই যেকোনো ভিডিওর লিংক মেসেজে পাঠান!"
+        )
 
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_bonus = types.InlineKeyboardButton("🎁 দৈনিক বোনাস (+৬)", callback_data="claim_bonus")
-    btn_bal = types.InlineKeyboardButton("💳 ব্যালেন্স দেখুন", callback_data="my_balance")
-    markup.add(btn_bonus, btn_bal)
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        btn_bonus = types.InlineKeyboardButton("🎁 দৈনিক বোনাস (+৬)", callback_data="claim_bonus")
+        btn_bal = types.InlineKeyboardButton("💳 ব্যালেন্স দেখুন", callback_data="my_balance")
+        markup.add(btn_bonus, btn_bal)
 
-    bot.reply_to(message, intro_text, parse_mode="Markdown", reply_markup=markup)
+        bot.reply_to(message, intro_text, parse_mode="Markdown", reply_markup=markup)
 
-@bot.message_handler(commands=['balance'])
-def balance_cmd(message):
-    user = get_user(message.from_user.id)
-    vip_tag = " [💎 Premium]" if user[2] == 1 else ""
-    bot.reply_to(message, f"🪙 আপনার বর্তমান ব্যালেন্স: **{user[1]} কয়েন**{vip_tag}", parse_mode="Markdown")
+    @bot.message_handler(commands=['balance'])
+    def balance_cmd(message):
+        user = get_user(message.from_user.id)
+        vip_tag = " [💎 Premium]" if user[2] == 1 else ""
+        bot.reply_to(message, f"🪙 আপনার বর্তমান ব্যালেন্স: **{user[1]} কয়েন**{vip_tag}", parse_mode="Markdown")
 
-@bot.message_handler(commands=['daily'])
-def daily_cmd(message):
-    success, msg = claim_daily_bonus(message.from_user.id)
-    bot.reply_to(message, msg)
+    @bot.message_handler(commands=['daily'])
+    def daily_cmd(message):
+        success, msg = claim_daily_bonus(message.from_user.id)
+        bot.reply_to(message, msg)
 
-# ৫. এডমিন প্যানেল UI (/ad)
-@bot.message_handler(commands=['ad'])
-def admin_panel_cmd(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "⛔ আপনি এই বটের অ্যাডমিন নন!")
-        return
+    @bot.message_handler(commands=['ad'])
+    def admin_panel_cmd(message):
+        if message.from_user.id != ADMIN_ID:
+            bot.reply_to(message, "⛔ আপনি এই বটের অ্যাডমিন নন!")
+            return
 
-    admin_text = "👑 **অ্যাডমিন কন্ট্রোল ড্যাশবোর্ড**\n\nনিচের বাটনগুলোর মাধ্যমে নিয়ন্ত্রণ করুন:"
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    b_chk = types.InlineKeyboardButton("🔍 ব্যালেন্স চেক", callback_data="adm_check")
-    b_tot = types.InlineKeyboardButton("📊 মোট ব্যবহারকারী", callback_data="adm_total")
-    b_add = types.InlineKeyboardButton("➕ কয়েন যোগ", callback_data="adm_add")
-    b_rmv = types.InlineKeyboardButton("➖ কয়েন কাটুন", callback_data="adm_remove")
-    b_vip = types.InlineKeyboardButton("💎 প্রিমিয়াম সেট", callback_data="adm_vip")
-    markup.add(b_chk, b_tot)
-    markup.add(b_add, b_rmv)
-    markup.add(b_vip)
+        admin_text = "👑 **অ্যাডমিন কন্ট্রোল ড্যাশবোর্ড**\n\nনিচের বাটনগুলোর মাধ্যমে নিয়ন্ত্রণ করুন:"
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        b_chk = types.InlineKeyboardButton("🔍 ব্যালেন্স চেক", callback_data="adm_check")
+        b_tot = types.InlineKeyboardButton("📊 মোট ব্যবহারকারী", callback_data="adm_total")
+        b_add = types.InlineKeyboardButton("➕ কয়েন যোগ", callback_data="adm_add")
+        b_rmv = types.InlineKeyboardButton("➖ কয়েন কাটুন", callback_data="adm_remove")
+        b_vip = types.InlineKeyboardButton("💎 প্রিমিয়াম সেট", callback_data="adm_vip")
+        markup.add(b_chk, b_tot)
+        markup.add(b_add, b_rmv)
+        markup.add(b_vip)
 
-    bot.reply_to(message, admin_text, parse_mode="Markdown", reply_markup=markup)
+        bot.reply_to(message, admin_text, parse_mode="Markdown", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_"))
-def admin_callbacks(call):
-    if call.from_user.id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "অ্যাক্সেস ডিনাইড!", show_alert=True)
-        return
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_"))
+    def admin_callbacks(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "অ্যাক্সেস ডিনাইড!", show_alert=True)
+            return
 
-    data = call.data
-    if data == "adm_total":
-        with db_mutex:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*), SUM(is_premium) FROM users")
-            row = cursor.fetchone()
-            conn.close()
-        total_users = row[0] or 0
-        total_vip = row[1] or 0
-        bot.answer_callback_query(call.id, f"📊 মোট ব্যবহারকারী: {total_users}\n💎 প্রিমিয়াম ব্যবহারকারী: {total_vip}", show_alert=True)
+        data = call.data
+        if data == "adm_total":
+            with db_mutex:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*), SUM(is_premium) FROM users")
+                row = cursor.fetchone()
+                conn.close()
+            total_users = row[0] or 0
+            total_vip = row[1] or 0
+            bot.answer_callback_query(call.id, f"📊 মোট ব্যবহারকারী: {total_users}\n💎 প্রিমিয়াম ব্যবহারকারী: {total_vip}", show_alert=True)
 
-    elif data == "adm_check":
-        msg = bot.send_message(call.message.chat.id, "🔍 যার ব্যালেন্স চেক করবেন তার **User ID** পাঠান:")
-        bot.register_next_step_handler(msg, step_check_balance)
+        elif data == "adm_check":
+            msg = bot.send_message(call.message.chat.id, "🔍 যার ব্যালেন্স চেক করবেন তার **User ID** পাঠান:")
+            bot.register_next_step_handler(msg, step_check_balance)
 
-    elif data == "adm_add":
-        msg = bot.send_message(call.message.chat.id, "➕ কয়েন যোগ করার ফরম্যাট: `USER_ID AMOUNT`", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, step_add_coins)
+        elif data == "adm_add":
+            msg = bot.send_message(call.message.chat.id, "➕ কয়েন যোগ করার ফরম্যাট: `USER_ID AMOUNT`", parse_mode="Markdown")
+            bot.register_next_step_handler(msg, step_add_coins)
 
-    elif data == "adm_remove":
-        msg = bot.send_message(call.message.chat.id, "➖ কয়েন কাটার ফরম্যাট: `USER_ID AMOUNT`", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, step_remove_coins)
+        elif data == "adm_remove":
+            msg = bot.send_message(call.message.chat.id, "➖ কয়েন কাটার ফরম্যাট: `USER_ID AMOUNT`", parse_mode="Markdown")
+            bot.register_next_step_handler(msg, step_remove_coins)
 
-    elif data == "adm_vip":
-        msg = bot.send_message(call.message.chat.id, "💎 প্রিমিয়াম পরিবর্তনের ফরম্যাট: `USER_ID STATUS` (১ বা ০)", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, step_toggle_vip)
+        elif data == "adm_vip":
+            msg = bot.send_message(call.message.chat.id, "💎 প্রিমিয়াম পরিবর্তনের ফরম্যাট: `USER_ID STATUS` (১ বা ০)", parse_mode="Markdown")
+            bot.register_next_step_handler(msg, step_toggle_vip)
 
-def step_check_balance(message):
-    try:
-        uid = int(message.text.strip())
-        u = get_user(uid)
-        vip_str = "হ্যাঁ" if u[2] == 1 else "না"
-        bot.reply_to(message, f"👤 ইউজার: `{uid}`\n🪙 ব্যালেন্স: **{u[1]} কয়েন**\n💎 প্রিমিয়াম: **{vip_str}**", parse_mode="Markdown")
-    except Exception:
-        bot.reply_to(message, "❌ ভুল আইডি দেওয়া হয়েছে।")
+    def step_check_balance(message):
+        try:
+            uid = int(message.text.strip())
+            u = get_user(uid)
+            vip_str = "হ্যাঁ" if u[2] == 1 else "না"
+            bot.reply_to(message, f"👤 ইউজার: `{uid}`\n🪙 ব্যালেন্স: **{u[1]} কয়েন**\n💎 প্রিমিয়াম: **{vip_str}**", parse_mode="Markdown")
+        except Exception:
+            bot.reply_to(message, "❌ ভুল আইডি দেওয়া হয়েছে।")
 
-def step_add_coins(message):
-    try:
-        parts = message.text.strip().split()
-        uid, amt = int(parts[0]), int(parts[1])
-        get_user(uid)
-        update_coins(uid, amt)
-        u = get_user(uid)
-        bot.reply_to(message, f"✅ ইউজার `{uid}`-এ **{amt}** কয়েন যোগ করা হয়েছে। ব্যালেন্স: **{u[1]} কয়েন**", parse_mode="Markdown")
-    except Exception:
-        bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID AMOUNT`", parse_mode="Markdown")
+    def step_add_coins(message):
+        try:
+            parts = message.text.strip().split()
+            uid, amt = int(parts[0]), int(parts[1])
+            get_user(uid)
+            update_coins(uid, amt)
+            u = get_user(uid)
+            bot.reply_to(message, f"✅ ইউজার `{uid}`-এ **{amt}** কয়েন যোগ করা হয়েছে। ব্যালেন্স: **{u[1]} কয়েন**", parse_mode="Markdown")
+        except Exception:
+            bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID AMOUNT`", parse_mode="Markdown")
 
-def step_remove_coins(message):
-    try:
-        parts = message.text.strip().split()
-        uid, amt = int(parts[0]), int(parts[1])
-        get_user(uid)
-        update_coins(uid, -amt)
-        u = get_user(uid)
-        bot.reply_to(message, f"✅ ইউজার `{uid}` থেকে **{amt}** কয়েন কাটা হয়েছে। ব্যালেন্স: **{u[1]} কয়েন**", parse_mode="Markdown")
-    except Exception:
-        bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID AMOUNT`", parse_mode="Markdown")
+    def step_remove_coins(message):
+        try:
+            parts = message.text.strip().split()
+            uid, amt = int(parts[0]), int(parts[1])
+            get_user(uid)
+            update_coins(uid, -amt)
+            u = get_user(uid)
+            bot.reply_to(message, f"✅ ইউজার `{uid}` থেকে **{amt}** কয়েন কাটা হয়েছে। ব্যালেন্স: **{u[1]} কয়েন**", parse_mode="Markdown")
+        except Exception:
+            bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID AMOUNT`", parse_mode="Markdown")
 
-def step_toggle_vip(message):
-    try:
-        parts = message.text.strip().split()
-        uid, st = int(parts[0]), int(parts[1])
-        get_user(uid)
-        set_premium(uid, st)
-        status_txt = "💎 প্রিমিয়াম অ্যাক্টিভ করা হয়েছে।" if st == 1 else "সাধারণ মেম্বার করা হয়েছে।"
-        bot.reply_to(message, f"✅ ইউজার `{uid}` {status_txt}", parse_mode="Markdown")
-    except Exception:
-        bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID STATUS` (১ বা ০)", parse_mode="Markdown")
+    def step_toggle_vip(message):
+        try:
+            parts = message.text.strip().split()
+            uid, st = int(parts[0]), int(parts[1])
+            get_user(uid)
+            set_premium(uid, st)
+            status_txt = "💎 প্রিমিয়াম অ্যাক্টিভ করা হয়েছে।" if st == 1 else "সাধারণ মেম্বার করা হয়েছে।"
+            bot.reply_to(message, f"✅ ইউজার `{uid}` {status_txt}", parse_mode="Markdown")
+        except Exception:
+            bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID STATUS` (১ বা ০)", parse_mode="Markdown")
 
-# ৬. ভিডিও লিংক গ্রহণ (টেলিগ্রাম বট)
-@bot.message_handler(func=lambda message: True)
-def handle_incoming_link(message):
-    raw_url = message.text.strip()
+    @bot.message_handler(func=lambda message: True)
+    def handle_incoming_link(message):
+        raw_url = message.text.strip()
 
-    if not (raw_url.startswith("http://") or raw_url.startswith("https://")):
-        bot.reply_to(message, "⚠️ দয়া করে একটি সঠিক ভিডিও URL পাঠান।")
-        return
+        if not (raw_url.startswith("http://") or raw_url.startswith("https://")):
+            bot.reply_to(message, "⚠️ দয়া করে একটি সঠিক ভিডিও URL পাঠান।")
+            return
 
-    user_id = message.chat.id
-    user = get_user(user_id)
-    is_vip = user[2] == 1
+        user_id = message.chat.id
+        user = get_user(user_id)
+        is_vip = user[2] == 1
 
-    if not is_vip and user[1] < 2:
-        bot.reply_to(message, "❌ আপনার অ্যাকাউন্টে পর্যাপ্ত কয়েন নেই!\nভিডিও ডাউনলোড করতে **২ কয়েন** প্রয়োজন।\n\n`/daily` লিখে ফ্রি ৬ কয়েন বোনাস নিন!", parse_mode="Markdown")
-        return
+        if not is_vip and user[1] < 2:
+            bot.reply_to(message, "❌ আপনার অ্যাকাউন্টে পর্যাপ্ত কয়েন নেই!\nভিডিও ডাউনলোড করতে **২ কয়েন** প্রয়োজন।\n\n`/daily` লিখে ফ্রি ৬ কয়েন বোনাস নিন!", parse_mode="Markdown")
+            return
 
-    resolved_url = resolve_url(raw_url)
+        resolved_url = resolve_url(raw_url)
 
-    # 💎 প্রিমিয়াম ইউজার: সরাসরি ডাউনলোড
-    if is_vip:
-        status_msg = bot.reply_to(message, "💎 প্রিমিয়াম অ্যাক্টিভ: ভিডিও সরাসরি প্রসেস করা হচ্ছে...")
+        if is_vip:
+            status_msg = bot.reply_to(message, "💎 প্রিমিয়াম অ্যাক্টিভ: ভিডিও সরাসরি প্রসেস করা হচ্ছে...")
+            video_title = "Social Video"
+            try:
+                ydl_opts_info = get_ydl_options('%(id)s.%(ext)s')
+                with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+                    info = ydl.extract_info(resolved_url, download=False)
+                    video_title = info.get('title') or "Social Video"
+            except Exception:
+                pass
+
+            download_and_send_video(user_id, resolved_url, video_title, is_vip=True, status_msg_id=status_msg.message_id)
+            return
+
+        status_msg = bot.reply_to(message, "🔍 ভিডিওর তথ্য অনুসন্ধান করা হচ্ছে, অপেক্ষা করুন...")
         video_title = "Social Video"
         try:
             ydl_opts_info = get_ydl_options('%(id)s.%(ext)s')
             with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
                 info = ydl.extract_info(resolved_url, download=False)
-                video_title = info.get('title') or "Social Video"
+                video_title = info.get('title') or info.get('description') or "Social Video"
+                if len(video_title) > 200:
+                    video_title = video_title[:200] + "..."
         except Exception:
             pass
 
-        download_and_send_video(user_id, resolved_url, video_title, is_vip=True, status_msg_id=status_msg.message_id)
-        return
+        PENDING_DOWNLOADS[user_id] = {
+            'url': resolved_url,
+            'title': video_title,
+            'is_vip': False
+        }
 
-    # 👤 সাধারণ ইউজার: কনফার্মেশন পপ-আপ
-    status_msg = bot.reply_to(message, "🔍 ভিডিওর তথ্য অনুসন্ধান করা হচ্ছে, অপেক্ষা করুন...")
-    video_title = "Social Video"
+        escaped_title = html.escape(video_title)
+        confirm_text = (
+            f"🎬 <b>ভিডিওর বিবরণ:</b>\n\n"
+            f"📝 <b>ক্যাপশন:</b>\n<code>{escaped_title}</code>\n\n"
+            f"💰 <b>ডাউনলোড খরচ:</b> ২ কয়েন\n"
+            f"🪙 <b>আপনার বর্তমান ব্যালেন্স:</b> {user[1]} কয়েন\n\n"
+            f"আপনি কি ভিডিওটি ডাউনলোড করতে চান?"
+        )
+
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        btn_confirm = types.InlineKeyboardButton("✅ নিশ্চিত করুন (Confirm)", callback_data="confirm_dl")
+        btn_cancel = types.InlineKeyboardButton("❌ বাতিল (Cancel)", callback_data="cancel_dl")
+        markup.add(btn_confirm, btn_cancel)
+
+        bot.edit_message_text(confirm_text, user_id, status_msg.message_id, parse_mode="HTML", reply_markup=markup)
+
+    @bot.callback_query_handler(func=lambda call: call.data in ["confirm_dl", "cancel_dl"])
+    def handle_download_confirmation(call):
+        user_id = call.message.chat.id
+
+        if call.data == "cancel_dl":
+            PENDING_DOWNLOADS.pop(user_id, None)
+            bot.edit_message_text("❌ ভিডিও ডাউনলোড বাতিল করা হয়েছে।", user_id, call.message.message_id)
+            return
+
+        task = PENDING_DOWNLOADS.get(user_id)
+        if not task:
+            bot.edit_message_text("⚠️ অনুরোধটির মেয়াদ শেষ হয়ে গেছে। আবার লিংক পাঠান।", user_id, call.message.message_id)
+            return
+
+        user = get_user(user_id)
+        if user[1] < 2:
+            bot.answer_callback_query(call.id, "❌ আপনার পর্যাপ্ত কয়েন নেই! প্রয়োজন ২ কয়েন।", show_alert=True)
+            return
+
+        bot.edit_message_text("⏳ ভিডিও ডাউনলোড ও টেলিগ্রামে প্রসেস করা হচ্ছে, অপেক্ষা করুন...", user_id, call.message.message_id)
+        download_and_send_video(user_id, task['url'], task['title'], is_vip=False, status_msg_id=call.message.message_id)
+        PENDING_DOWNLOADS.pop(user_id, None)
+
+    @bot.callback_query_handler(func=lambda call: True)
+    def user_callbacks(call):
+        if call.data == "claim_bonus":
+            success, msg = claim_daily_bonus(call.from_user.id)
+            bot.answer_callback_query(call.id, text=msg, show_alert=True)
+        elif call.data == "my_balance":
+            user = get_user(call.from_user.id)
+            vip_tag = " (💎 প্রিমিয়াম মেম্বার)" if user[2] == 1 else ""
+            bot.answer_callback_query(call.id, text=f"🪙 আপনার ব্যালেন্স: {user[1]} কয়েন{vip_tag}", show_alert=True)
+
+if __name__ == "__main__":
     try:
-        ydl_opts_info = get_ydl_options('%(id)s.%(ext)s')
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            info = ydl.extract_info(resolved_url, download=False)
-            video_title = info.get('title') or info.get('description') or "Social Video"
-            if len(video_title) > 200:
-                video_title = video_title[:200] + "..."
-    except Exception:
-        pass
+        init_db()
+        # Flask সার্ভার ব্যাকগ্রাউন্ড থ্রেডে শুরু
+        t = threading.Thread(target=run_web_server, daemon=True)
+        t.start()
 
-    PENDING_DOWNLOADS[user_id] = {
-        'url': resolved_url,
-        'title': video_title,
-        'is_vip': False
-    }
+        if not bot:
+            print("⚠️ Bot polling skipped because BOT_TOKEN is not configured. Web server running.", flush=True)
+            while True:
+                time.sleep(3600)
 
-    escaped_title = html.escape(video_title)
-    confirm_text = (
-        f"🎬 <b>ভিডিওর বিবরণ:</b>\n\n"
-        f"📝 <b>ক্যাপশন:</b>\n<code>{escaped_title}</code>\n\n"
-        f"💰 <b>ডাউনলোড খরচ:</b> ২ কয়েন\n"
-        f"🪙 <b>আপনার বর্তমান ব্যালেন্স:</b> {user[1]} কয়েন\n\n"
-        f"আপনি কি ভিডিওটি ডাউনলোড করতে চান?"
-    )
+        try:
+            bot.remove_webhook()
+            time.sleep(1)
+        except Exception:
+            pass
 
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_confirm = types.InlineKeyboardButton("✅ নিশ্চিত করুন (Confirm)", callback_data="confirm_dl")
-    btn_cancel = types.InlineKeyboardButton("❌ বাতিল (Cancel)", callback_data="cancel_dl")
-    markup.add(btn_confirm, btn_cancel)
+        print("🚀 Downloader Bot & Web Server are LIVE and healthy!", flush=True)
 
-    bot.edit_message_text(confirm_text, user_id, status_msg.message_id, parse_mode="HTML", reply_markup=markup)
+        while True:
+            try:
+                bot.polling(none_stop=True, interval=1, timeout=20)
+            except telebot.apihelper.ApiTelegramException as e:
+                print(f"[!] Telegram API Exception: {e}", flush=True)
+                if e.error_code == 409:
+                    time.sleep(5)
+                else:
+                    time.sleep(3)
+            except Exception as e:
+                print(f"[!] Polling Error: {e}", flush=True)
+                time.sleep(3)
 
-# ৭. কনফার্মেশন বাটন হ্যান্ডলার
+    except Exception as e:
+        print("❌ CRITICAL STARTUP ERROR:", flush=True)
+        traceback.print_exc()
+        sys.stdout.flush()
+        # ক্র্যাশ বন্ধ রেখে ১০ মিনিট স্লিপে থাকবে যাতে লগ দেখার সুযোগ থাকে
+        time.sleep(600)
