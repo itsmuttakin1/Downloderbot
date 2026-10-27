@@ -6,18 +6,204 @@ import shutil
 import sqlite3
 import threading
 from datetime import datetime, date
-from flask import Flask
+from flask import Flask, request, jsonify, render_template_string, send_file
 import telebot
 from telebot import types
 import yt_dlp
 import requests
 
-# ১. Render Port সচল রাখতে Flask সার্ভার
+# ১. Flask ওয়েব সার্ভার ও রেসপনসিভ ওয়েব ইন্টারফেস
 app = Flask(__name__)
+
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Video Downloader</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between font-sans">
+    <div class="max-w-3xl mx-auto w-full px-4 py-12 flex-grow flex flex-col justify-center">
+        <!-- Brand Header -->
+        <div class="text-center mb-8">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/20 mb-4">
+                <i class="fa-solid fa-cloud-arrow-down text-2xl text-white"></i>
+            </div>
+            <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight text-white">
+                Universal <span class="text-cyan-400">Downloader</span>
+            </h1>
+            <p class="text-slate-400 mt-2 text-sm md:text-base">
+                Facebook, TikTok, Instagram, Twitter, Pinterest সহ যেকোনো ভিডিও সহজে ডাউনলোড করুন
+            </p>
+        </div>
+
+        <!-- Download Card -->
+        <div class="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl backdrop-blur-xl">
+            <form id="downloadForm" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">ভিডিও লিংক পেস্ট করুন</label>
+                    <div class="relative">
+                        <input type="url" id="videoUrl" required placeholder="https://..." 
+                            class="w-full bg-slate-950 border border-slate-700/80 rounded-2xl py-3.5 pl-4 pr-12 text-sm text-slate-200 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all">
+                        <button type="button" onclick="pasteClipboard()" class="absolute right-3.5 top-3.5 text-slate-400 hover:text-cyan-400 transition-colors" title="Paste">
+                            <i class="fa-regular fa-paste text-lg"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <button type="submit" id="submitBtn" 
+                    class="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-semibold text-sm shadow-lg shadow-cyan-500/25 transition-all flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-bolt"></i>
+                    <span>ডাউনলোড শুরু করুন</span>
+                </button>
+            </form>
+
+            <!-- Status & Spinner -->
+            <div id="statusBox" class="hidden mt-6 text-center">
+                <div class="inline-flex items-center gap-3 px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-cyan-400">
+                    <svg class="animate-spin h-4 w-4 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                    </svg>
+                    <span id="statusText">ভিডিও প্রসেস করা হচ্ছে...</span>
+                </div>
+            </div>
+
+            <!-- Result Box -->
+            <div id="resultBox" class="hidden mt-6 p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div class="truncate w-full sm:w-auto">
+                    <p id="videoTitle" class="text-sm font-medium text-slate-200 truncate max-w-sm"></p>
+                    <p class="text-xs text-emerald-400 mt-0.5"><i class="fa-solid fa-circle-check mr-1"></i>ভিডিও সম্পূর্ণ প্রস্তুত!</p>
+                </div>
+                <a id="downloadLink" href="#" download class="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-semibold text-center transition-all flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-arrow-down"></i>
+                    <span>Save Video</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Telegram Bot Link -->
+        <div class="mt-8 text-center">
+            <a href="https://t.me/mrghost_121" target="_blank" class="inline-flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-cyan-400 transition-colors">
+                <i class="fa-brands fa-telegram text-base text-cyan-400"></i>
+                <span>টেলিগ্রাম বটের সাথে যুক্ত হন (@mrghost_121)</span>
+            </a>
+        </div>
+    </div>
+
+    <footer class="py-4 text-center text-xs text-slate-600 border-t border-slate-900">
+        Powered by Mr Ghost | Universal Video Engine
+    </footer>
+
+    <script>
+        async function pasteClipboard() {
+            try {
+                const text = await navigator.clipboard.readText();
+                document.getElementById('videoUrl').value = text;
+            } catch (err) {}
+        }
+
+        document.getElementById('downloadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const url = document.getElementById('videoUrl').value.trim();
+            if (!url) return;
+
+            const submitBtn = document.getElementById('submitBtn');
+            const statusBox = document.getElementById('statusBox');
+            const resultBox = document.getElementById('resultBox');
+            const statusText = document.getElementById('statusText');
+
+            submitBtn.disabled = true;
+            statusBox.classList.remove('hidden');
+            resultBox.classList.add('hidden');
+            statusText.innerText = "ভিডিও ডাউনলোড ও প্রসেস হচ্ছে, অপেক্ষা করুন...";
+
+            try {
+                const response = await fetch('/api/web-download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    statusBox.classList.add('hidden');
+                    resultBox.classList.remove('hidden');
+                    document.getElementById('videoTitle').innerText = data.title;
+                    document.getElementById('downloadLink').href = data.download_url;
+                } else {
+                    alert('ত্রুটি: ' + data.error);
+                    statusBox.classList.add('hidden');
+                }
+            } catch (err) {
+                alert('সার্ভার রেসপন্স করেনি। আবার চেষ্টা করুন।');
+                statusBox.classList.add('hidden');
+            } finally {
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
+"""
 
 @app.route('/')
 def home():
-    return "Social Downloader Bot is Running Perfectly!"
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/api/web-download', methods=['POST'])
+def web_download_api():
+    data = request.get_json() or {}
+    url = data.get('url', '').strip()
+    if not url:
+        return jsonify({'success': False, 'error': 'URL দেওয়া হয়নি'}), 400
+
+    temp_id = f"web_{int(time.time() * 1000)}"
+    output_dir = f"downloads/{temp_id}"
+    os.makedirs(output_dir, exist_ok=True)
+
+    ydl_opts = {
+        'format': 'best[filesize<48M]/bestvideo[filesize<35M]+bestaudio[filesize<10M]/best',
+        'merge_output_format': 'mp4',
+        'outtmpl': f'{output_dir}/video.%(ext)s',
+        'quiet': True,
+        'no_warnings': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        }
+    }
+    if FFMPEG_DIR:
+        ydl_opts['ffmpeg_location'] = FFMPEG_DIR
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            title = info.get('title') or "Video"
+
+        files = glob.glob(f"{output_dir}/*")
+        if not files:
+            return jsonify({'success': False, 'error': 'ভিডিও পাওয়া যায়নি বা সাইজ বেশি'}), 400
+
+        filename = os.path.basename(files[0])
+        return jsonify({
+            'success': True,
+            'title': title,
+            'download_url': f'/get-file/{temp_id}/{filename}'
+        })
+    except Exception as e:
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir, ignore_errors=True)
+        return jsonify({'success': False, 'error': str(e)[:100]}), 500
+
+@app.route('/get-file/<folder>/<filename>')
+def serve_downloaded_file(folder, filename):
+    file_path = os.path.join("downloads", folder, filename)
+    if os.path.exists(file_path):
+        return send_file(file_path, as_attachment=True)
+    return "File Not Found", 404
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -37,9 +223,8 @@ DB_PATH = "bot_database.db"
 db_mutex = threading.Lock()
 
 def get_db_connection():
-    # timeout=30 দিলে লক ছাড়ার জন্য ৩০ সেকেন্ড পর্যন্ত অপেক্ষা করবে
     conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL;")  # কনকারেন্ট রিড/রাইট সাপোর্ট
+    conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA busy_timeout = 30000;")
     return conn
 
@@ -113,7 +298,6 @@ def resolve_url(url):
     except Exception:
         return url
 
-# সাধারণ ইউজারদের পেন্ডিং ডাউনলোডের মেমোরি ক্যাশ
 PENDING_DOWNLOADS = {}
 
 # ভিডিও ডাউনলোড ও ডেলিভারি করার সেন্ট্রাল ফাংশন
@@ -202,15 +386,15 @@ def start_cmd(message):
 
     intro_text = (
         f"👋 **সালাম {message.from_user.first_name}!** 🚀\n\n"
-        "এই বটটি ব্যবহার করা খুবই সহজ! আপনি কেবল যেকোনো **ভিডিওর লিংক চ্যাটে পাঠিয়ে দিন**, বাকি কাজ বট স্বয়ংক্রিয়ভাবে সম্পন্ন করবে।\n\n"
+        "এই বটটি ব্যবহার করা খুবই সহজ! আপনি কেবল যেকোনো **সোশ্যাল মিডিয়া বা ওয়েবসাইটের ভিডিও লিংক পাঠিয়ে দিন**, বট সাথে সাথে ভিডিওটি ডাউনলোড করে দেবে।\n\n"
         "✨ **সাপোর্টেড প্ল্যাটফর্মসমূহ:**\n"
-        "🔹 **Facebook** (Reels ও পাবলিক ভিডিও)\n"
-        "🔹 **TikTok** (ওয়াটারমার্ক ছাড়া ক্লিয়ার ভিডিও)\n"
-        "🔹 **Instagram** (Reels ও পোস্ট ভিডিও)\n\n"
+        "🔹 Facebook, TikTok, Instagram, Twitter (X)\n"
+        "🔹 Pinterest, Reddit, Threads, Vimeo\n"
+        "🔹 যেকোনো পাবলিক ওয়েবসাইটের ডিরেক্ট ভিডিও লিংক\n\n"
         "📊 **আপনার অ্যাকাউন্ট তথ্য:**\n"
         f"• স্ট্যাটাস: **{membership_status}**\n"
         f"• বর্তমান ব্যালেন্স: `{user[1]}` কয়েন\n\n"
-        "💡 **নিয়মাবলী:**\n"
+        "💡 **নিয়মাবলী:**\n"
         "• প্রতি ভিডিও ডাউনলোড: **২ কয়েন**\n"
         "• দৈনিক ফ্রি বোনাস: **৬ কয়েন**\n\n"
         "👉 ভিডিও পেতে এখনই যেকোনো ভিডিওর লিংক মেসেজে পাঠান!"
@@ -330,7 +514,7 @@ def step_toggle_vip(message):
     except Exception:
         bot.reply_to(message, "❌ ফরম্যাট সঠিক নয়! উদাহরণ: `USER_ID STATUS` (১ বা ০)", parse_mode="Markdown")
 
-# ৬. ভিডিও লিংক গ্রহণ
+# ৬. ভিডিও লিংক গ্রহণ (যেকোনো সাইট সমর্থিত)
 @bot.message_handler(func=lambda message: True)
 def handle_incoming_link(message):
     raw_url = message.text.strip()
@@ -339,13 +523,8 @@ def handle_incoming_link(message):
         bot.reply_to(message, "⚠️ দয়া করে একটি সঠিক ভিডিও URL পাঠান।")
         return
 
-    if "youtu" in raw_url:
-        bot.reply_to(message, "⚠️ ইউটিউব ভিডিও এই বটে সাপোর্ট করে না! ফেসবুক, ইনস্টাগ্রাম অথবা টিকটকের লিংক দিন।")
-        return
-
-    valid_platforms = ["facebook.com", "fb.watch", "tiktok.com", "instagram.com"]
-    if not any(p in raw_url.lower() for p in valid_platforms):
-        bot.reply_to(message, "⚠️ শুধুমাত্র ফেসবুক, টিকটক এবং ইনস্টাগ্রাম ভিডিও লিংক সাপোর্ট করে।")
+    if "youtu.be" in raw_url or "youtube.com" in raw_url:
+        bot.reply_to(message, "⚠️ দুঃখিত! সার্ভার আইপি ব্লকিংয়ের কারণে ইউটিউব সাপোর্ট করে না। ফেসবুক, ইনস্টাগ্রাম, টিকটক, টুইটার, পিন্টারেস্ট সহ যেকোনো সাইটের লিংক দিন।")
         return
 
     user_id = message.chat.id
