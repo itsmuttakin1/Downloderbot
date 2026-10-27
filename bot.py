@@ -12,7 +12,7 @@ from telebot import types
 import yt_dlp
 import requests
 
-# ১. Flask ওয়েব সার্ভার ও রেসপনসিভ ড্যাশবোর্ড
+# ১. Flask ওয়েব সার্ভার ও রেসপনসিভ ডাউনলোডার পেজ
 app = Flask(__name__)
 
 HTML_TEMPLATE = """
@@ -36,7 +36,7 @@ HTML_TEMPLATE = """
                 Universal <span class="text-cyan-400">Downloader</span>
             </h1>
             <p class="text-slate-400 mt-2 text-sm md:text-base">
-                Facebook, TikTok, Instagram, Twitter, Pinterest সহ যেকোনো ভিডিও সহজে ডাউনলোড করুন
+                YouTube, Facebook, TikTok, Instagram, Pinterest সহ যেকোনো ভিডিও ডাউনলোড করুন
             </p>
         </div>
 
@@ -61,14 +61,14 @@ HTML_TEMPLATE = """
                 </button>
             </form>
 
-            <!-- Status & Spinner -->
+            <!-- Status Box -->
             <div id="statusBox" class="hidden mt-6 text-center">
                 <div class="inline-flex items-center gap-3 px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-cyan-400">
                     <svg class="animate-spin h-4 w-4 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
                     </svg>
-                    <span id="statusText">ভিডিও প্রসেস করা হচ্ছে...</span>
+                    <span id="statusText">ভিডিও সংগ্রহ ও প্রসেস হচ্ছে...</span>
                 </div>
             </div>
 
@@ -76,7 +76,7 @@ HTML_TEMPLATE = """
             <div id="resultBox" class="hidden mt-6 p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div class="truncate w-full sm:w-auto">
                     <p id="videoTitle" class="text-sm font-medium text-slate-200 truncate max-w-sm"></p>
-                    <p class="text-xs text-emerald-400 mt-0.5"><i class="fa-solid fa-circle-check mr-1"></i>ভিডিও সম্পূর্ণ প্রস্তুত!</p>
+                    <p class="text-xs text-emerald-400 mt-0.5"><i class="fa-solid fa-circle-check mr-1"></i>ভিডিও প্রস্তুত হয়েছে!</p>
                 </div>
                 <a id="downloadLink" href="#" download class="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-semibold text-center transition-all flex items-center justify-center gap-2">
                     <i class="fa-solid fa-arrow-down"></i>
@@ -85,7 +85,7 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- Telegram Bot Link -->
+        <!-- Telegram Link -->
         <div class="mt-8 text-center">
             <a href="https://t.me/mrghost_121" target="_blank" class="inline-flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-cyan-400 transition-colors">
                 <i class="fa-brands fa-telegram text-base text-cyan-400"></i>
@@ -150,40 +150,42 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# YouTube বাইপাস ডাউনলোড ইঞ্জিন
-def download_youtube_via_api(url, output_path):
-    instances = [
-        "https://cobalt-api.kwiatekm.tokyo",
-        "https://api.cobalt.tools",
-        "https://cobalt.api.scub3d.com"
-    ]
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "url": url,
-        "videoQuality": "720",
-        "youtubeVideoCodec": "h264"
+# শর্টলিংক বা রিডাইরেক্ট হওয়া আসল URL পাওয়ার ফাংশন
+def resolve_url(url):
+    try:
+        res = requests.head(url, allow_redirects=True, timeout=12)
+        return res.url
+    except Exception:
+        return url
+
+# yt-dlp সার্বজনীন অপশন (YouTube cookies.txt ও Pinterest ফিক্সসহ)
+def get_ydl_options(output_path):
+    opts = {
+        # Pinterest ও অন্যান্য সাইটের ফরম্যাট মিসিং এরর এড়াতে নমনীয় ফরম্যাট
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'merge_output_format': 'mp4',
+        'outtmpl': output_path,
+        'quiet': True,
+        'no_warnings': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+        },
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web']
+            }
+        }
     }
 
-    for inst in instances:
-        try:
-            r = requests.post(f"{inst}/", json=payload, headers=headers, timeout=12)
-            if r.status_code == 200:
-                data = r.json()
-                dl_url = data.get("url")
-                if dl_url:
-                    with requests.get(dl_url, stream=True, timeout=60) as res:
-                        res.raise_for_status()
-                        with open(output_path, "wb") as f:
-                            for chunk in res.iter_content(chunk_size=1024 * 1024):
-                                if chunk:
-                                    f.write(chunk)
-                    return True
-        except Exception:
-            continue
-    return False
+    if FFMPEG_DIR:
+        opts['ffmpeg_location'] = FFMPEG_DIR
+
+    # cookies.txt ফাইল পাওয়া গেলে স্বয়ংক্রিয়ভাবে লোড হবে
+    if os.path.exists("cookies.txt"):
+        opts['cookiefile'] = "cookies.txt"
+
+    return opts
 
 @app.route('/')
 def home():
@@ -192,61 +194,26 @@ def home():
 @app.route('/api/web-download', methods=['POST'])
 def web_download_api():
     data = request.get_json() or {}
-    url = data.get('url', '').strip()
-    if not url:
+    raw_url = data.get('url', '').strip()
+    if not raw_url:
         return jsonify({'success': False, 'error': 'কোনো ভিডিও URL দেওয়া হয়নি'}), 400
 
+    url = resolve_url(raw_url)
     temp_id = f"web_{int(time.time() * 1000)}"
     output_dir = f"downloads/{temp_id}"
     os.makedirs(output_dir, exist_ok=True)
-    video_out = f"{output_dir}/video.mp4"
+    out_template = f'{output_dir}/video.%(ext)s'
 
-    is_youtube = ("youtu.be" in url or "youtube.com" in url)
-
-    # YouTube হলে ক্লাউড আইপি ব্লক এড়াতে বাইপাস এপিআই ব্যবহার
-    if is_youtube:
-        success = False
-        try:
-            success = download_youtube_via_api(url, video_out)
-        except Exception:
-            pass
-
-        if success and os.path.exists(video_out):
-            return jsonify({
-                'success': True,
-                'title': 'YouTube Video',
-                'download_url': f'/get-file/{temp_id}/video.mp4'
-            })
-        else:
-            if os.path.exists(output_dir):
-                shutil.rmtree(output_dir, ignore_errors=True)
-            return jsonify({
-                'success': False,
-                'error': 'ইউটিউবের ডেটাসেন্টার আইপি রেস্ট্রিকশনের কারণে এটি ডাউনলোড সম্ভব হয়নি। অনুগ্রহ করে Facebook, TikTok, Instagram, Pinterest ইত্যাদির লিংক দিন।'
-            }), 400
-
-    # অন্যান্য প্ল্যাটফর্মের জন্য সার্বজনীন yt-dlp
-    ydl_opts = {
-        'format': 'best[filesize<48M]/bestvideo[filesize<35M]+bestaudio[filesize<10M]/best',
-        'merge_output_format': 'mp4',
-        'outtmpl': f'{output_dir}/video.%(ext)s',
-        'quiet': True,
-        'no_warnings': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        }
-    }
-    if FFMPEG_DIR:
-        ydl_opts['ffmpeg_location'] = FFMPEG_DIR
+    ydl_opts = get_ydl_options(out_template)
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            title = info.get('title') or "Social Video"
+            title = info.get('title') or "Video"
 
-        files = glob.glob(f"{output_dir}/*")
+        files = [f for f in glob.glob(f"{output_dir}/*") if not f.endswith(('.temp', '.part', '.ytdl'))]
         if not files:
-            return jsonify({'success': False, 'error': 'ভিডিও পাওয়া যায়নি বা সাইজ ৫০MB-এর বেশি'}), 400
+            return jsonify({'success': False, 'error': 'ভিডিও পাওয়া যায়নি বা ডাউনলোড ব্যর্থ হয়েছে'}), 400
 
         filename = os.path.basename(files[0])
         return jsonify({
@@ -257,7 +224,7 @@ def web_download_api():
     except Exception as e:
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir, ignore_errors=True)
-        return jsonify({'success': False, 'error': f'ভিডিও সংগ্রহ করতে সমস্যা হয়েছে: {str(e)[:100]}'}), 500
+        return jsonify({'success': False, 'error': f'ত্রুটি: {str(e)[:120]}'}), 500
 
 @app.route('/get-file/<folder>/<filename>')
 def serve_downloaded_file(folder, filename):
@@ -270,7 +237,7 @@ def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# ২. টেলিগ্রাম কনফিগারেশন
+# ২. টেলিগ্রাম বট কনফিগারেশন
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is missing!")
@@ -279,7 +246,7 @@ ADMIN_ID = 5140546628  # আপনার Telegram Admin ID
 bot = telebot.TeleBot(BOT_TOKEN)
 FFMPEG_DIR = os.path.abspath("ffmpeg_bin") if os.path.exists("ffmpeg_bin") else None
 
-# ৩. ডাটাবেজ সেটআপ
+# ৩. ডাটাবেজ সেটআপ (লক ঠেকানোর মিউটেক্স ও WAL মোড)
 DB_PATH = "bot_database.db"
 db_mutex = threading.Lock()
 
@@ -352,61 +319,31 @@ def claim_daily_bonus(user_id):
         conn.close()
         return True, "🎉 অভিনন্দন! আপনি সফলভাবে দৈনিক ৬ কয়েন বোনাস পেয়েছেন।"
 
-def resolve_url(url):
-    try:
-        response = requests.head(url, allow_redirects=True, timeout=10)
-        return response.url
-    except Exception:
-        return url
-
 PENDING_DOWNLOADS = {}
 
+# ভিডিও ডাউনলোড ও টেলিগ্রামে ডেলিভারি ফাংশন
 def download_and_send_video(user_id, target_url, video_title, is_vip, status_msg_id=None):
     output_dir = f"downloads/{user_id}_{int(time.time())}"
     os.makedirs(output_dir, exist_ok=True)
-    video_out = f"{output_dir}/video.mp4"
+    out_template = f'{output_dir}/%(id)s.%(ext)s'
 
-    is_youtube = ("youtu.be" in target_url or "youtube.com" in target_url)
-    downloaded = False
+    ydl_opts = get_ydl_options(out_template)
 
-    if is_youtube:
-        try:
-            downloaded = download_youtube_via_api(target_url, video_out)
-        except Exception:
-            downloaded = False
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([target_url])
 
-    if not downloaded:
-        ydl_opts = {
-            'format': 'best[filesize<48M]/bestvideo[filesize<35M]+bestaudio[filesize<10M]/best',
-            'merge_output_format': 'mp4',
-            'outtmpl': f'{output_dir}/%(id)s.%(ext)s',
-            'quiet': True,
-            'no_warnings': True,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            }
-        }
-        if FFMPEG_DIR:
-            ydl_opts['ffmpeg_location'] = FFMPEG_DIR
-
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([target_url])
-            files = glob.glob(f"{output_dir}/*")
-            if files:
-                video_out = files[0]
-                downloaded = True
-        except Exception as e:
-            bot.send_message(user_id, f"⚠️ ত্রুটি: {str(e)[:120]}")
+        files = [f for f in glob.glob(f"{output_dir}/*") if not f.endswith(('.temp', '.part', '.ytdl'))]
+        if not files:
+            bot.send_message(user_id, "❌ ভিডিও ডাউনলোড করা সম্ভব হয়নি বা সাইজ ৫০MB-এর বেশি।")
             if status_msg_id:
                 try: bot.delete_message(user_id, status_msg_id)
                 except Exception: pass
-            if os.path.exists(output_dir):
-                shutil.rmtree(output_dir, ignore_errors=True)
             return
 
-    if downloaded and os.path.exists(video_out):
-        file_size_mb = os.path.getsize(video_out) / (1024 * 1024)
+        file_path = files[0]
+        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+
         if file_size_mb > 49.5:
             bot.send_message(user_id, "❌ ভিডিও সাইজ ৫০MB-এর বেশি হওয়ায় টেলিগ্রামে পাঠানো সম্ভব নয়।")
         else:
@@ -426,20 +363,26 @@ def download_and_send_video(user_id, target_url, video_title, is_vip, status_msg
                 f'video download by "<a href="https://t.me/mrghost_121">Mr Ghost</a>"'
             )
 
-            with open(video_out, 'rb') as vf:
+            with open(file_path, 'rb') as vf:
                 bot.send_video(user_id, vf, caption=caption_text, parse_mode="HTML", supports_streaming=True)
 
         if status_msg_id:
             try: bot.delete_message(user_id, status_msg_id)
             except Exception: pass
-    else:
-        bot.send_message(user_id, "❌ ভিডিও ডাউনলোড করা সম্ভব হয়নি।")
+
+    except Exception as e:
+        err_msg = str(e)
+        if "Sign in to confirm you're not a bot" in err_msg:
+            bot.send_message(user_id, "⚠️ YouTube সেশন রিফ্রেশ প্রয়োজন। দয়া করে নতুন করে cookies.txt আপডেট করুন।")
+        else:
+            bot.send_message(user_id, f"⚠️ ত্রুটি: {err_msg[:120]}")
         if status_msg_id:
             try: bot.delete_message(user_id, status_msg_id)
             except Exception: pass
 
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir, ignore_errors=True)
+    finally:
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir, ignore_errors=True)
 
 # ৪. /start কমান্ড
 @bot.message_handler(commands=['start'])
@@ -452,10 +395,10 @@ def start_cmd(message):
 
     intro_text = (
         f"👋 **সালাম {message.from_user.first_name}!** 🚀\n\n"
-        "এই বটটি ব্যবহার করা খুবই সহজ! আপনি কেবল যেকোনো **ভিডিও লিংক চ্যাটে পাঠিয়ে দিন**, বাকি কাজ বট স্বয়ংক্রিয়ভাবে সম্পন্ন করবে।\n\n"
+        "এই বটটি ব্যবহার করা খুবই সহজ! আপনি কেবল যেকোনো **সোশ্যাল মিডিয়া বা ভিডিও লিংক চ্যাটে পাঠিয়ে দিন**, বাকি কাজ বট স্বয়ংক্রিয়ভাবে সম্পন্ন করবে।\n\n"
         "✨ **সাপোর্টেড প্ল্যাটফর্মসমূহ:**\n"
-        "🔹 Facebook, TikTok, Instagram, Twitter (X)\n"
-        "🔹 Pinterest, Reddit, Threads, Vimeo সহ যেকোনো পাবলিক লিংক\n\n"
+        "🔹 YouTube, Facebook, TikTok, Instagram\n"
+        "🔹 Pinterest, Twitter (X), Reddit, Threads সহ যেকোনো সাইট\n\n"
         "📊 **আপনার অ্যাকাউন্ট তথ্য:**\n"
         f"• স্ট্যাটাস: **{membership_status}**\n"
         f"• বর্তমান ব্যালেন্স: `{user[1]}` কয়েন\n\n"
@@ -603,7 +546,7 @@ def handle_incoming_link(message):
         status_msg = bot.reply_to(message, "💎 প্রিমিয়াম অ্যাক্টিভ: ভিডিও সরাসরি প্রসেস করা হচ্ছে...")
         video_title = "Social Video"
         try:
-            ydl_opts_info = {'extract_flat': False, 'quiet': True, 'no_warnings': True}
+            ydl_opts_info = get_ydl_options('%(id)s.%(ext)s')
             with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
                 info = ydl.extract_info(resolved_url, download=False)
                 video_title = info.get('title') or "Social Video"
@@ -617,7 +560,7 @@ def handle_incoming_link(message):
     status_msg = bot.reply_to(message, "🔍 ভিডিওর তথ্য অনুসন্ধান করা হচ্ছে, অপেক্ষা করুন...")
     video_title = "Social Video"
     try:
-        ydl_opts_info = {'extract_flat': False, 'quiet': True, 'no_warnings': True}
+        ydl_opts_info = get_ydl_options('%(id)s.%(ext)s')
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(resolved_url, download=False)
             video_title = info.get('title') or info.get('description') or "Social Video"
@@ -649,59 +592,3 @@ def handle_incoming_link(message):
     bot.edit_message_text(confirm_text, user_id, status_msg.message_id, parse_mode="HTML", reply_markup=markup)
 
 # ৭. কনফার্মেশন বাটন হ্যান্ডলার
-@bot.callback_query_handler(func=lambda call: call.data in ["confirm_dl", "cancel_dl"])
-def handle_download_confirmation(call):
-    user_id = call.message.chat.id
-
-    if call.data == "cancel_dl":
-        PENDING_DOWNLOADS.pop(user_id, None)
-        bot.edit_message_text("❌ ভিডিও ডাউনলোড বাতিল করা হয়েছে।", user_id, call.message.message_id)
-        return
-
-    task = PENDING_DOWNLOADS.get(user_id)
-    if not task:
-        bot.edit_message_text("⚠️ অনুরোধটির মেয়াদ শেষ হয়ে গেছে। আবার লিংক পাঠান।", user_id, call.message.message_id)
-        return
-
-    user = get_user(user_id)
-    if user[1] < 2:
-        bot.answer_callback_query(call.id, "❌ আপনার পর্যাপ্ত কয়েন নেই! প্রয়োজন ২ কয়েন।", show_alert=True)
-        return
-
-    bot.edit_message_text("⏳ ভিডিও ডাউনলোড ও টেলিগ্রামে প্রসেস করা হচ্ছে, অপেক্ষা করুন...", user_id, call.message.message_id)
-    download_and_send_video(user_id, task['url'], task['title'], is_vip=False, status_msg_id=call.message.message_id)
-    PENDING_DOWNLOADS.pop(user_id, None)
-
-# ৮. সাধারণ বাটন হ্যান্ডলার
-@bot.callback_query_handler(func=lambda call: True)
-def user_callbacks(call):
-    if call.data == "claim_bonus":
-        success, msg = claim_daily_bonus(call.from_user.id)
-        bot.answer_callback_query(call.id, text=msg, show_alert=True)
-    elif call.data == "my_balance":
-        user = get_user(call.from_user.id)
-        vip_tag = " (💎 প্রিমিয়াম মেম্বার)" if user[2] == 1 else ""
-        bot.answer_callback_query(call.id, text=f"🪙 আপনার ব্যালেন্স: {user[1]} কয়েন{vip_tag}", show_alert=True)
-
-if __name__ == "__main__":
-    init_db()
-    threading.Thread(target=run_web_server, daemon=True).start()
-
-    try:
-        bot.remove_webhook()
-        time.sleep(1)
-    except Exception:
-        pass
-
-    print("Bot is successfully running...")
-
-    while True:
-        try:
-            bot.polling(none_stop=True, interval=1, timeout=20)
-        except telebot.apihelper.ApiTelegramException as e:
-            if e.error_code == 409:
-                time.sleep(5)
-            else:
-                time.sleep(3)
-        except Exception:
-            time.sleep(3)
